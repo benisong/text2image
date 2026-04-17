@@ -4,7 +4,10 @@ import { JOB_STATUS, OUTPUT_MODE } from "@/lib/constants";
 import { nowIso } from "@/lib/utils";
 import { buildCommentary } from "@/server/ai/commentary";
 import { buildOptimizedPrompt } from "@/server/ai/prompt-optimizer";
-import { generateImageWithVertex } from "@/server/ai/vertex-imagen";
+import {
+  generateImageWithVertex,
+  VertexImagenError,
+} from "@/server/ai/vertex-imagen";
 import { getDb } from "@/server/db";
 import {
   getGenerationById,
@@ -252,14 +255,20 @@ export async function runSingleJob(jobId: string) {
       finishedAt: new Date().toISOString(),
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown job error";
+    const internalMessage =
+      error instanceof Error ? error.message : "Unknown job error";
+    const publicMessage =
+      error instanceof VertexImagenError
+        ? error.publicMessage
+        : "生成失败，请稍后重试。";
 
-    markGenerationFailed(generation.id, message);
+    markGenerationFailed(generation.id, internalMessage, publicMessage);
     updateJobStatus({
       jobId,
       status: JOB_STATUS.failed,
       progress: 100,
-      errorMessage: message,
+      errorMessage: internalMessage,
+      publicErrorMessage: publicMessage,
       finishedAt: new Date().toISOString(),
     });
   }

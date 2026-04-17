@@ -1,18 +1,13 @@
 import { NextResponse } from "next/server";
 
+import { withUser } from "@/lib/api-auth";
 import { readJsonBody } from "@/lib/http";
 import { changePasswordSchema } from "@/lib/validators/settings";
-import { getCurrentUser } from "@/server/auth/session";
+import { recordAudit } from "@/server/services/audit";
 import { changeOwnPassword } from "@/server/services/users";
 
-export async function POST(request: Request) {
-  const user = await getCurrentUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "未登录。" }, { status: 401 });
-  }
-
-  const body = await readJsonBody(request);
+export const POST = withUser(async (ctx) => {
+  const body = await readJsonBody(ctx.request);
 
   if (body === null) {
     return NextResponse.json(
@@ -30,7 +25,7 @@ export async function POST(request: Request) {
   }
 
   const result = changeOwnPassword({
-    userId: user.id,
+    userId: ctx.user.id,
     currentPassword: parsed.data.currentPassword,
     newPassword: parsed.data.newPassword,
   });
@@ -39,5 +34,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: result.error }, { status: 400 });
   }
 
+  recordAudit({
+    action: "auth.password_changed",
+    actorId: ctx.user.id,
+    actorUsername: ctx.user.username,
+    ip: ctx.ip,
+  });
+
   return NextResponse.json({ ok: true });
-}
+});

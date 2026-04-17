@@ -1,22 +1,15 @@
 import { NextResponse } from "next/server";
 
+import { withUser } from "@/lib/api-auth";
 import { ROLE } from "@/lib/constants";
-import { getCurrentUser } from "@/server/auth/session";
-import { getGenerationById, getSessionById } from "@/server/services/sessions";
-import { readImageByPath } from "@/server/storage/images";
+import {
+  getGenerationById,
+  getSessionById,
+} from "@/server/services/sessions";
+import { openImageStream } from "@/server/storage/images";
 
-export async function GET(
-  _request: Request,
-  context: { params: Promise<{ generationId: string }> },
-) {
-  const user = await getCurrentUser();
-
-  if (!user) {
-    return new NextResponse("Unauthorized", { status: 401 });
-  }
-
-  const { generationId } = await context.params;
-  const generation = getGenerationById(generationId);
+export const GET = withUser<{ generationId: string }>(async (ctx) => {
+  const generation = getGenerationById(ctx.params.generationId);
 
   if (!generation?.storagePath) {
     return new NextResponse("Not found", { status: 404 });
@@ -24,16 +17,23 @@ export async function GET(
 
   const session = getSessionById(generation.sessionId);
 
-  if (!session || (user.role !== ROLE.admin && session.userId !== user.id)) {
+  if (!session || (ctx.user.role !== ROLE.admin && session.userId !== ctx.user.id)) {
     return new NextResponse("Forbidden", { status: 403 });
   }
 
-  const image = readImageByPath(generation.storagePath);
+  const etag = `"${generation.id}"`;
+  if (ctx.request.headers.get("if-none-match") === etag) {
+    return new NextResponse(null, { status: 304 });
+  }
 
-  return new NextResponse(image.file, {
+  const image = openImageStream(generation.storagePath);
+
+  return new NextResponse(image.stream, {
     headers: {
       "Content-Type": image.mimeType,
-      "Cache-Control": "private, max-age=3600",
+      "Content-Length": String(image.size),
+      "Cache-Control": "private, max-age=31536000, immutable",
+      ETag: etag,
     },
   });
-}
+});

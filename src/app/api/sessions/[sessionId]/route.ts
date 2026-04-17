@@ -1,53 +1,43 @@
 import { NextResponse } from "next/server";
 
-import { getCurrentUser } from "@/server/auth/session";
+import { withUser } from "@/lib/api-auth";
+import { recordAudit } from "@/server/services/audit";
 import {
   deleteSessionWithAssets,
   getMessagesForSession,
   getSessionById,
 } from "@/server/services/sessions";
 
-export async function GET(
-  _request: Request,
-  context: { params: Promise<{ sessionId: string }> },
-) {
-  const user = await getCurrentUser();
+export const GET = withUser<{ sessionId: string }>(async (ctx) => {
+  const session = getSessionById(ctx.params.sessionId);
 
-  if (!user) {
-    return NextResponse.json({ error: "未登录" }, { status: 401 });
-  }
-
-  const { sessionId } = await context.params;
-  const session = getSessionById(sessionId);
-
-  if (!session || session.userId !== user.id) {
+  if (!session || session.userId !== ctx.user.id) {
     return NextResponse.json({ error: "会话不存在" }, { status: 404 });
   }
 
   return NextResponse.json({
     session,
-    messages: getMessagesForSession(sessionId),
+    ...getMessagesForSession(ctx.params.sessionId),
   });
-}
+});
 
-export async function DELETE(
-  _request: Request,
-  context: { params: Promise<{ sessionId: string }> },
-) {
-  const user = await getCurrentUser();
+export const DELETE = withUser<{ sessionId: string }>(async (ctx) => {
+  const session = getSessionById(ctx.params.sessionId);
 
-  if (!user) {
-    return NextResponse.json({ error: "未登录" }, { status: 401 });
-  }
-
-  const { sessionId } = await context.params;
-  const session = getSessionById(sessionId);
-
-  if (!session || session.userId !== user.id) {
+  if (!session || session.userId !== ctx.user.id) {
     return NextResponse.json({ error: "会话不存在" }, { status: 404 });
   }
 
-  deleteSessionWithAssets(sessionId);
+  deleteSessionWithAssets(ctx.params.sessionId);
+
+  recordAudit({
+    action: "session.deleted",
+    actorId: ctx.user.id,
+    actorUsername: ctx.user.username,
+    targetType: "session",
+    targetId: ctx.params.sessionId,
+    ip: ctx.ip,
+  });
 
   return NextResponse.json({ ok: true });
-}
+});

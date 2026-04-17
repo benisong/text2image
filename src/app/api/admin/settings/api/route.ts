@@ -1,32 +1,20 @@
 import { NextResponse } from "next/server";
 
+import { withAdmin } from "@/lib/api-auth";
 import { readJsonBody } from "@/lib/http";
 import { apiSettingsSchema } from "@/lib/validators/settings";
-import { getCurrentUser } from "@/server/auth/session";
+import { recordAudit } from "@/server/services/audit";
 import {
   getPublicApiSettings,
   updateApiSettings,
 } from "@/server/services/settings";
-import { isAdmin } from "@/server/services/users";
 
-export async function GET() {
-  const user = await getCurrentUser();
-
-  if (!isAdmin(user)) {
-    return NextResponse.json({ error: "无权限" }, { status: 403 });
-  }
-
+export const GET = withAdmin(async () => {
   return NextResponse.json({ settings: getPublicApiSettings() });
-}
+});
 
-export async function PUT(request: Request) {
-  const user = await getCurrentUser();
-
-  if (!isAdmin(user)) {
-    return NextResponse.json({ error: "无权限" }, { status: 403 });
-  }
-
-  const body = await readJsonBody(request);
+export const PUT = withAdmin(async (ctx) => {
+  const body = await readJsonBody(ctx.request);
 
   if (body === null) {
     return NextResponse.json({ error: "请求体不是合法的 JSON。" }, { status: 400 });
@@ -41,5 +29,16 @@ export async function PUT(request: Request) {
 
   updateApiSettings(parsed.data);
 
+  recordAudit({
+    action: "admin.api_settings_updated",
+    actorId: ctx.user.id,
+    actorUsername: ctx.user.username,
+    targetType: "settings",
+    metadata: {
+      updatedServiceAccount: (parsed.data.serviceAccountJson ?? "").trim().length > 0,
+    },
+    ip: ctx.ip,
+  });
+
   return NextResponse.json({ ok: true });
-}
+});

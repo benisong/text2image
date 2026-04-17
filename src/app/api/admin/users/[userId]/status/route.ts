@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 
+import { withAdmin } from "@/lib/api-auth";
 import { readJsonBody } from "@/lib/http";
 import { userStatusSchema } from "@/lib/validators/auth";
-import { getCurrentUser } from "@/server/auth/session";
+import { recordAudit } from "@/server/services/audit";
 import {
   countActiveAdmins,
   findUserById,
@@ -10,18 +11,8 @@ import {
   updateUserStatus,
 } from "@/server/services/users";
 
-export async function PATCH(
-  request: Request,
-  context: { params: Promise<{ userId: string }> },
-) {
-  const admin = await getCurrentUser();
-
-  if (!isAdmin(admin)) {
-    return NextResponse.json({ error: "无权限" }, { status: 403 });
-  }
-
-  const { userId } = await context.params;
-  const body = await readJsonBody(request);
+export const PATCH = withAdmin<{ userId: string }>(async (ctx) => {
+  const body = await readJsonBody(ctx.request);
 
   if (body === null) {
     return NextResponse.json(
@@ -36,8 +27,10 @@ export async function PATCH(
     return NextResponse.json({ error: "状态参数不正确。" }, { status: 400 });
   }
 
+  const { userId } = ctx.params;
+
   if (!parsed.data.isActive) {
-    if (admin && admin.id === userId) {
+    if (ctx.user.id === userId) {
       return NextResponse.json(
         { error: "不能停用当前登录的管理员账号。" },
         { status: 400 },
@@ -59,5 +52,15 @@ export async function PATCH(
 
   updateUserStatus(userId, parsed.data.isActive);
 
+  recordAudit({
+    action: "admin.user_status_updated",
+    actorId: ctx.user.id,
+    actorUsername: ctx.user.username,
+    targetType: "user",
+    targetId: userId,
+    metadata: { isActive: parsed.data.isActive },
+    ip: ctx.ip,
+  });
+
   return NextResponse.json({ ok: true });
-}
+});

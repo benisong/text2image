@@ -12,6 +12,16 @@ type GenerateImageInput = {
   seed?: number | null;
 };
 
+export class VertexImagenError extends Error {
+  readonly publicMessage: string;
+
+  constructor(publicMessage: string, internalMessage?: string) {
+    super(internalMessage ?? publicMessage);
+    this.publicMessage = publicMessage;
+    this.name = "VertexImagenError";
+  }
+}
+
 export async function generateImageWithVertex(input: GenerateImageInput) {
   const settings = getApiSettings();
   const location = settings.vertexLocation || DEFAULT_VERTEX_LOCATION;
@@ -20,7 +30,10 @@ export async function generateImageWithVertex(input: GenerateImageInput) {
   const credentialsText = settings.serviceAccountJson;
 
   if (!projectId || !credentialsText) {
-    throw new Error("Vertex AI 配置未完成，请先在管理端填写项目和服务账号 JSON。");
+    throw new VertexImagenError(
+      "Vertex AI 未配置，请联系管理员完善配置。",
+      "Vertex AI 配置未完成，请先在管理端填写项目和服务账号 JSON。",
+    );
   }
 
   let credentials: object;
@@ -28,7 +41,10 @@ export async function generateImageWithVertex(input: GenerateImageInput) {
   try {
     credentials = JSON.parse(credentialsText);
   } catch {
-    throw new Error("服务账号 JSON 格式不正确。");
+    throw new VertexImagenError(
+      "Vertex AI 凭据无效，请联系管理员。",
+      "服务账号 JSON 格式不正确。",
+    );
   }
 
   const auth = new GoogleAuth({
@@ -41,7 +57,10 @@ export async function generateImageWithVertex(input: GenerateImageInput) {
   const accessToken = accessTokenResponse.token;
 
   if (!accessToken) {
-    throw new Error("无法获取 Vertex AI 访问令牌。");
+    throw new VertexImagenError(
+      "Vertex AI 凭据无效，请联系管理员。",
+      "无法获取 Vertex AI 访问令牌。",
+    );
   }
 
   const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:predict`;
@@ -73,7 +92,16 @@ export async function generateImageWithVertex(input: GenerateImageInput) {
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Vertex AI 请求失败: ${response.status} ${errorText}`);
+    const publicMessage =
+      response.status === 429
+        ? "Vertex AI 当前繁忙或额度不足，请稍后重试。"
+        : response.status >= 500
+          ? "Vertex AI 暂时不可用，请稍后重试。"
+          : "生成失败，请检查提示词后重试。";
+    throw new VertexImagenError(
+      publicMessage,
+      `Vertex AI 请求失败: ${response.status} ${errorText}`,
+    );
   }
 
   const data = (await response.json()) as {
@@ -87,7 +115,10 @@ export async function generateImageWithVertex(input: GenerateImageInput) {
   const prediction = data.predictions?.[0];
 
   if (!prediction?.bytesBase64Encoded) {
-    throw new Error("Vertex AI 没有返回图片数据。");
+    throw new VertexImagenError(
+      "生成失败，请稍后重试。",
+      "Vertex AI 没有返回图片数据。",
+    );
   }
 
   return {

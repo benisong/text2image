@@ -1,35 +1,33 @@
 import { NextResponse } from "next/server";
 
+import { withUser } from "@/lib/api-auth";
 import { readJsonBody } from "@/lib/http";
 import { sessionCreateSchema } from "@/lib/validators/generation";
-import { getCurrentUser } from "@/server/auth/session";
+import { recordAudit } from "@/server/services/audit";
 import { createSession, listSessionsForUser } from "@/server/services/sessions";
 
-export async function GET() {
-  const user = await getCurrentUser();
+export const GET = withUser(async (ctx) => {
+  return NextResponse.json({ sessions: listSessionsForUser(ctx.user.id) });
+});
 
-  if (!user) {
-    return NextResponse.json({ error: "未登录" }, { status: 401 });
-  }
-
-  return NextResponse.json({ sessions: listSessionsForUser(user.id) });
-}
-
-export async function POST(request: Request) {
-  const user = await getCurrentUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "未登录" }, { status: 401 });
-  }
-
-  const body = (await readJsonBody(request)) ?? {};
+export const POST = withUser(async (ctx) => {
+  const body = (await readJsonBody(ctx.request)) ?? {};
   const parsed = sessionCreateSchema.safeParse(body);
 
   if (!parsed.success) {
     return NextResponse.json({ error: "会话参数不正确。" }, { status: 400 });
   }
 
-  const sessionId = createSession(user.id, parsed.data.title || "新会话");
+  const sessionId = createSession(ctx.user.id, parsed.data.title || "新会话");
+
+  recordAudit({
+    action: "session.created",
+    actorId: ctx.user.id,
+    actorUsername: ctx.user.username,
+    targetType: "session",
+    targetId: sessionId,
+    ip: ctx.ip,
+  });
 
   return NextResponse.json({ id: sessionId });
-}
+});

@@ -2,6 +2,7 @@ import "server-only";
 
 import fs from "node:fs";
 import path from "node:path";
+import { Readable } from "node:stream";
 
 import { DEFAULT_IMAGE_ROOT } from "@/lib/constants";
 import { resolveDataPath } from "@/server/fs-paths";
@@ -64,15 +65,17 @@ export function saveGenerationImage(input: {
   };
 }
 
-export function readImageByPath(storagePath: string) {
-  const file = fs.readFileSync(storagePath);
+export function openImageStream(storagePath: string) {
+  const stat = fs.statSync(storagePath);
   const extension = path.extname(storagePath).toLowerCase();
   const mimeType =
     extension === ".jpg" || extension === ".jpeg" ? "image/jpeg" : "image/png";
+  const stream = Readable.toWeb(fs.createReadStream(storagePath)) as ReadableStream<Uint8Array>;
 
   return {
-    file,
+    stream,
     mimeType,
+    size: stat.size,
   };
 }
 

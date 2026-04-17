@@ -1,33 +1,44 @@
 import { NextResponse } from "next/server";
 
+import { withUser } from "@/lib/api-auth";
 import { readJsonBody } from "@/lib/http";
 import { messageCreateSchema } from "@/lib/validators/generation";
-import { getCurrentUser } from "@/server/auth/session";
 import { enqueueJob } from "@/server/jobs/runner";
 import {
   CreateMessageError,
+  MESSAGES_PAGE_SIZE,
   createMessageAndGeneration,
+  getMessagesForSession,
   getSessionById,
 } from "@/server/services/sessions";
 
-export async function POST(
-  request: Request,
-  context: { params: Promise<{ sessionId: string }> },
-) {
-  const user = await getCurrentUser();
+export const GET = withUser<{ sessionId: string }>(async (ctx) => {
+  const session = getSessionById(ctx.params.sessionId);
 
-  if (!user) {
-    return NextResponse.json({ error: "未登录" }, { status: 401 });
-  }
-
-  const { sessionId } = await context.params;
-  const session = getSessionById(sessionId);
-
-  if (!session || session.userId !== user.id) {
+  if (!session || session.userId !== ctx.user.id) {
     return NextResponse.json({ error: "会话不存在" }, { status: 404 });
   }
 
-  const body = await readJsonBody(request);
+  const url = new URL(ctx.request.url);
+  const before = url.searchParams.get("before") ?? undefined;
+  const limitParam = url.searchParams.get("limit");
+  const limit = limitParam
+    ? Math.min(Math.max(Number(limitParam) || MESSAGES_PAGE_SIZE, 1), 200)
+    : MESSAGES_PAGE_SIZE;
+
+  return NextResponse.json(
+    getMessagesForSession(ctx.params.sessionId, { before, limit }),
+  );
+});
+
+export const POST = withUser<{ sessionId: string }>(async (ctx) => {
+  const session = getSessionById(ctx.params.sessionId);
+
+  if (!session || session.userId !== ctx.user.id) {
+    return NextResponse.json({ error: "会话不存在" }, { status: 404 });
+  }
+
+  const body = await readJsonBody(ctx.request);
 
   if (body === null) {
     return NextResponse.json(
@@ -44,7 +55,7 @@ export async function POST(
 
   try {
     const created = createMessageAndGeneration({
-      sessionId,
+      sessionId: ctx.params.sessionId,
       content: parsed.data.content,
       mode: parsed.data.mode,
       parentGenerationId: parsed.data.parentGenerationId,
@@ -71,4 +82,4 @@ export async function POST(
 
     throw error;
   }
-}
+});

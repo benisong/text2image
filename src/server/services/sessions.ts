@@ -71,26 +71,65 @@ export function getSessionById(sessionId: string) {
   };
 }
 
-export function getMessagesForSession(sessionId: string) {
+export const MESSAGES_PAGE_SIZE = 50;
+
+export type ChatMessageView = {
+  id: string;
+  role: string;
+  messageType: string;
+  contentText: string | null;
+  createdAt: string;
+  generationId: string | null;
+  publicUrl: string | null;
+  outputMode: string | null;
+  explanationText: string | null;
+  generationStatus: string | null;
+  generationPublicError: string | null;
+};
+
+type MessagesPage = {
+  messages: ChatMessageView[];
+  hasMore: boolean;
+};
+
+export function getMessagesForSession(
+  sessionId: string,
+  options: { limit?: number; before?: string } = {},
+): MessagesPage {
+  const limit = Math.min(Math.max(options.limit ?? MESSAGES_PAGE_SIZE, 1), 200);
+  const fetchLimit = limit + 1;
+
+  const params: (string | number)[] = [sessionId];
+  let whereClause = "m.session_id = ?";
+
+  if (options.before) {
+    whereClause += " AND m.created_at < ?";
+    params.push(options.before);
+  }
+
+  params.push(fetchLimit);
+
   const rows = getDb()
-    .prepare(`
-      SELECT
-        m.id,
-        m.role,
-        m.message_type,
-        m.content_text,
-        m.created_at,
-        g.id as generation_id,
-        g.public_url,
-        g.output_mode,
-        g.explanation_text,
-        g.status as generation_status
-      FROM chat_messages m
-      LEFT JOIN generations g ON g.id = m.generation_id
-      WHERE m.session_id = ?
-      ORDER BY m.created_at ASC
-    `)
-    .all(sessionId) as Array<{
+    .prepare(
+      `SELECT
+         m.id,
+         m.role,
+         m.message_type,
+         m.content_text,
+         m.created_at,
+         g.id as generation_id,
+         g.public_url,
+         g.output_mode,
+         g.explanation_text,
+         g.status as generation_status,
+         g.public_error_message as generation_public_error
+       FROM chat_messages m
+       LEFT JOIN generations g ON g.id = m.generation_id
+       WHERE ${whereClause}
+       ORDER BY m.created_at DESC
+       LIMIT ?`,
+    )
+    .all(...params) as Array<{
     id: string;
     role: string;
     message_type: string;
@@ -101,20 +140,29 @@ export function getMessagesForSession(sessionId: string) {
     output_mode: string | null;
     explanation_text: string | null;
     generation_status: string | null;
+    generation_public_error: string | null;
   }>;
 
-  return rows.map((row) => ({
-    id: row.id,
-    role: row.role,
-    messageType: row.message_type,
-    contentText: row.content_text,
-    createdAt: row.created_at,
-    generationId: row.generation_id,
-    publicUrl: row.public_url,
-    outputMode: row.output_mode,
-    explanationText: row.explanation_text,
-    generationStatus: row.generation_status,
-  }));
+  const hasMore = rows.length > limit;
+  const slice = hasMore ? rows.slice(0, limit) : rows;
+
+  const messages: ChatMessageView[] = slice
+    .map((row) => ({
+      id: row.id,
+      role: row.role,
+      messageType: row.message_type,
+      contentText: row.content_text,
+      createdAt: row.created_at,
+      generationId: row.generation_id,
+      publicUrl: row.public_url,
+      outputMode: row.output_mode,
+      explanationText: row.explanation_text,
+      generationStatus: row.generation_status,
+      generationPublicError: row.generation_public_error,
+    }))
+    .reverse();
+
+  return { messages, hasMore };
 }
 
 export function getGenerationById(generationId: string) {
@@ -145,6 +193,7 @@ export function getGenerationById(generationId: string) {
         public_url: string | null;
         file_size_bytes: number | null;
         error_message: string | null;
+        public_error_message: string | null;
         created_at: string;
         completed_at: string | null;
       }
@@ -174,6 +223,7 @@ export function getGenerationById(generationId: string) {
     publicUrl: row.public_url,
     fileSizeBytes: row.file_size_bytes,
     errorMessage: row.error_message,
+    publicErrorMessage: row.public_error_message,
     createdAt: row.created_at,
     completedAt: row.completed_at,
   };
@@ -181,12 +231,13 @@ export function getGenerationById(generationId: string) {
 
 export function getJobById(jobId: string) {
   const row = getDb()
-    .prepare(`
-      SELECT j.id, j.generation_id, j.session_id, s.user_id, j.status, j.progress, j.error_message
-      FROM jobs j
-      JOIN sessions s ON s.id = j.session_id
-      WHERE j.id = ?
-    `)
+    .prepare(
+      `SELECT j.id, j.generation_id, j.session_id, s.user_id, j.status, j.progress,
+              j.error_message, j.public_error_message
+       FROM jobs j
+       JOIN sessions s ON s.id = j.session_id
+       WHERE j.id = ?`,
+    )
     .get(jobId) as
     | {
         id: string;
@@ -196,6 +247,7 @@ export function getJobById(jobId: string) {
         status: string;
         progress: number;
         error_message: string | null;
+        public_error_message: string | null;
       }
     | undefined;
 
@@ -211,6 +263,7 @@ export function getJobById(jobId: string) {
     status: row.status,
     progress: row.progress,
     errorMessage: row.error_message,
+    publicErrorMessage: row.public_error_message,
   };
 }
 
@@ -302,19 +355,22 @@ export function updateJobStatus(input: {
   status: string;
   progress: number;
   errorMessage?: string | null;
+  publicErrorMessage?: string | null;
   startedAt?: string | null;
   finishedAt?: string | null;
 }) {
   getDb()
-    .prepare(`
-      UPDATE jobs
-      SET status = ?, progress = ?, error_message = ?, updated_at = ?, started_at = COALESCE(?, started_at), finished_at = ?
-      WHERE id = ?
-    `)
+    .prepare(
+      `UPDATE jobs
+       SET status = ?, progress = ?, error_message = ?, public_error_message = ?,
+           updated_at = ?, started_at = COALESCE(?, started_at), finished_at = ?
+       WHERE id = ?`,
+    )
     .run(
       input.status,
       input.progress,
       input.errorMessage ?? null,
+      input.publicErrorMessage ?? null,
       nowIso(),
       input.startedAt ?? null,
       input.finishedAt ?? null,
@@ -366,53 +422,147 @@ export function markGenerationCompleted(input: {
   explanationStatus: string;
 }) {
   const now = nowIso();
-  getDb()
-    .prepare(`
-      UPDATE generations
-      SET status = ?, mime_type = ?, effective_prompt = ?, public_url = ?, storage_path = ?,
-          file_size_bytes = ?, explanation_text = ?, explanation_status = ?, updated_at = ?, completed_at = ?
-      WHERE id = ?
-    `)
-    .run(
-      GENERATION_STATUS.completed,
-      input.mimeType,
-      input.effectivePrompt,
-      input.publicUrl,
-      input.storagePath,
-      input.fileSizeBytes,
-      input.explanationText,
-      input.explanationStatus,
-      now,
-      now,
-      input.generationId,
-    );
 
-  const generation = getGenerationById(input.generationId);
-
-  if (generation) {
-    getDb()
-      .prepare(`
-        INSERT INTO chat_messages (id, session_id, role, message_type, content_text, generation_id, job_id, created_at)
-        VALUES (?, ?, 'assistant', 'image', ?, ?, NULL, ?)
-      `)
+  transaction((db) => {
+    const updateResult = db
+      .prepare(
+        `UPDATE generations
+         SET status = ?, mime_type = ?, effective_prompt = ?, public_url = ?, storage_path = ?,
+             file_size_bytes = ?, explanation_text = ?, explanation_status = ?, updated_at = ?, completed_at = ?
+         WHERE id = ? AND status <> ?`,
+      )
       .run(
-        crypto.randomUUID(),
-        generation.sessionId,
+        GENERATION_STATUS.completed,
+        input.mimeType,
+        input.effectivePrompt,
+        input.publicUrl,
+        input.storagePath,
+        input.fileSizeBytes,
         input.explanationText,
-        input.generationId,
+        input.explanationStatus,
         now,
+        now,
+        input.generationId,
+        GENERATION_STATUS.completed,
       );
+
+    if (updateResult.changes === 0) {
+      return;
+    }
+
+    const existing = db
+      .prepare(
+        `SELECT id FROM chat_messages
+         WHERE generation_id = ? AND role = 'assistant'
+         LIMIT 1`,
+      )
+      .get(input.generationId) as { id: string } | undefined;
+
+    if (existing) {
+      db.prepare(
+        `UPDATE chat_messages SET content_text = ? WHERE id = ?`,
+      ).run(input.explanationText, existing.id);
+      return;
+    }
+
+    const generation = db
+      .prepare(`SELECT session_id FROM generations WHERE id = ?`)
+      .get(input.generationId) as { session_id: string } | undefined;
+
+    if (!generation) {
+      return;
+    }
+
+    db.prepare(
+      `INSERT INTO chat_messages (id, session_id, role, message_type, content_text, generation_id, job_id, created_at)
+       VALUES (?, ?, 'assistant', 'image', ?, ?, NULL, ?)`,
+    ).run(
+      crypto.randomUUID(),
+      generation.session_id,
+      input.explanationText,
+      input.generationId,
+      now,
+    );
+  });
+}
+
+export function markGenerationFailed(
+  generationId: string,
+  internalMessage: string,
+  publicMessage: string,
+) {
+  getDb()
+    .prepare(
+      `UPDATE generations
+       SET status = ?, error_message = ?, public_error_message = ?,
+           explanation_status = ?, updated_at = ?
+       WHERE id = ?`,
+    )
+    .run(
+      GENERATION_STATUS.failed,
+      internalMessage,
+      publicMessage,
+      "failed",
+      nowIso(),
+      generationId,
+    );
+}
+
+export class RetryGenerationError extends Error {
+  constructor(public reason: "not_found" | "forbidden" | "not_failed") {
+    super(reason);
   }
 }
 
-export function markGenerationFailed(generationId: string, message: string) {
-  getDb()
-    .prepare(`
-      UPDATE generations
-      SET status = ?, error_message = ?, explanation_status = ?, updated_at = ?
-      WHERE id = ?
-    `)
-    .run(GENERATION_STATUS.failed, message, "failed", nowIso(), generationId);
+export function retryFailedGeneration(input: { generationId: string; userId: string }) {
+  return transaction((db) => {
+    const row = db
+      .prepare(
+        `SELECT g.id, g.session_id, g.status, s.user_id
+         FROM generations g
+         JOIN sessions s ON s.id = g.session_id
+         WHERE g.id = ?`,
+      )
+      .get(input.generationId) as
+      | { id: string; session_id: string; status: string; user_id: string }
+      | undefined;
+
+    if (!row) {
+      throw new RetryGenerationError("not_found");
+    }
+
+    if (row.user_id !== input.userId) {
+      throw new RetryGenerationError("forbidden");
+    }
+
+    if (row.status !== GENERATION_STATUS.failed) {
+      throw new RetryGenerationError("not_failed");
+    }
+
+    const now = nowIso();
+    const jobId = crypto.randomUUID();
+
+    db.prepare(
+      `UPDATE generations
+       SET status = ?, error_message = NULL, error_code = NULL,
+           explanation_status = 'none', explanation_text = NULL, updated_at = ?
+       WHERE id = ?`,
+    ).run(GENERATION_STATUS.queued, now, row.id);
+
+    db.prepare(
+      `INSERT INTO jobs (
+         id, session_id, generation_id, job_type, queue_name, queue_job_id,
+         status, attempt_count, progress, error_message, created_at, updated_at
+       )
+       VALUES (?, ?, ?, 'image_generation', 'image-generation', ?, ?, 0, 0, NULL, ?, ?)`,
+    ).run(jobId, row.session_id, row.id, jobId, JOB_STATUS.waiting, now, now);
+
+    db.prepare(
+      `UPDATE sessions SET updated_at = ?, last_message_at = ? WHERE id = ?`,
+    ).run(now, now, row.session_id);
+
+    return { jobId, sessionId: row.session_id };
+  });
 }
 
 export function deleteSessionWithAssets(sessionId: string) {

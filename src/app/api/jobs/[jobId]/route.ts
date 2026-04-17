@@ -1,29 +1,27 @@
 import { NextResponse } from "next/server";
 
+import { withUser } from "@/lib/api-auth";
 import { ROLE } from "@/lib/constants";
-import { getCurrentUser } from "@/server/auth/session";
 import { getJobById } from "@/server/services/sessions";
 
-export async function GET(
-  _request: Request,
-  context: { params: Promise<{ jobId: string }> },
-) {
-  const user = await getCurrentUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const { jobId } = await context.params;
-  const job = getJobById(jobId);
+export const GET = withUser<{ jobId: string }>(async (ctx) => {
+  const job = getJobById(ctx.params.jobId);
 
   if (!job) {
     return NextResponse.json({ error: "Job not found" }, { status: 404 });
   }
 
-  if (user.role !== ROLE.admin && job.userId !== user.id) {
+  if (ctx.user.role !== ROLE.admin && job.userId !== ctx.user.id) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  return NextResponse.json(job);
-}
+  return NextResponse.json({
+    id: job.id,
+    status: job.status,
+    progress: job.progress,
+    errorMessage:
+      job.status === "failed"
+        ? job.publicErrorMessage ?? "生成失败，请稍后重试。"
+        : null,
+  });
+});

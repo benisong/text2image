@@ -154,10 +154,24 @@ function createDatabase() {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id TEXT PRIMARY KEY,
+      actor_id TEXT,
+      actor_username TEXT,
+      action TEXT NOT NULL,
+      target_type TEXT,
+      target_id TEXT,
+      metadata TEXT,
+      ip TEXT,
+      created_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_messages_session_id ON chat_messages(session_id);
+    CREATE INDEX IF NOT EXISTS idx_messages_created_at ON chat_messages(session_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_generations_session_id ON generations(session_id);
     CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+    CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_log(created_at);
   `);
 
   migrateSchema(db);
@@ -167,14 +181,30 @@ function createDatabase() {
 }
 
 function migrateSchema(db: Database) {
-  const columns = db
+  const userColumns = db
     .prepare(`PRAGMA table_info(users)`)
     .all() as Array<{ name: string }>;
 
-  if (!columns.some((column) => column.name === "must_change_password")) {
+  if (!userColumns.some((column) => column.name === "must_change_password")) {
     db.exec(
       `ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0`,
     );
+  }
+
+  const generationColumns = db
+    .prepare(`PRAGMA table_info(generations)`)
+    .all() as Array<{ name: string }>;
+
+  if (!generationColumns.some((column) => column.name === "public_error_message")) {
+    db.exec(`ALTER TABLE generations ADD COLUMN public_error_message TEXT`);
+  }
+
+  const jobColumns = db
+    .prepare(`PRAGMA table_info(jobs)`)
+    .all() as Array<{ name: string }>;
+
+  if (!jobColumns.some((column) => column.name === "public_error_message")) {
+    db.exec(`ALTER TABLE jobs ADD COLUMN public_error_message TEXT`);
   }
 }
 

@@ -1,22 +1,13 @@
 import { NextResponse } from "next/server";
 
+import { withAdmin } from "@/lib/api-auth";
 import { readJsonBody } from "@/lib/http";
 import { resetPasswordSchema } from "@/lib/validators/auth";
-import { getCurrentUser } from "@/server/auth/session";
-import { isAdmin, resetUserPassword } from "@/server/services/users";
+import { recordAudit } from "@/server/services/audit";
+import { resetUserPassword } from "@/server/services/users";
 
-export async function PATCH(
-  request: Request,
-  context: { params: Promise<{ userId: string }> },
-) {
-  const admin = await getCurrentUser();
-
-  if (!isAdmin(admin)) {
-    return NextResponse.json({ error: "无权限" }, { status: 403 });
-  }
-
-  const { userId } = await context.params;
-  const body = await readJsonBody(request);
+export const PATCH = withAdmin<{ userId: string }>(async (ctx) => {
+  const body = await readJsonBody(ctx.request);
 
   if (body === null) {
     return NextResponse.json(
@@ -31,7 +22,16 @@ export async function PATCH(
     return NextResponse.json({ error: "密码格式不正确。" }, { status: 400 });
   }
 
-  resetUserPassword(userId, parsed.data.password);
+  resetUserPassword(ctx.params.userId, parsed.data.password);
+
+  recordAudit({
+    action: "admin.user_password_reset",
+    actorId: ctx.user.id,
+    actorUsername: ctx.user.username,
+    targetType: "user",
+    targetId: ctx.params.userId,
+    ip: ctx.ip,
+  });
 
   return NextResponse.json({ ok: true });
-}
+});

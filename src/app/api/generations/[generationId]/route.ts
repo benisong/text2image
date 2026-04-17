@@ -1,21 +1,11 @@
 import { NextResponse } from "next/server";
 
+import { withUser } from "@/lib/api-auth";
 import { ROLE } from "@/lib/constants";
-import { getCurrentUser } from "@/server/auth/session";
 import { getGenerationById, getSessionById } from "@/server/services/sessions";
 
-export async function GET(
-  _request: Request,
-  context: { params: Promise<{ generationId: string }> },
-) {
-  const user = await getCurrentUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const { generationId } = await context.params;
-  const generation = getGenerationById(generationId);
+export const GET = withUser<{ generationId: string }>(async (ctx) => {
+  const generation = getGenerationById(ctx.params.generationId);
 
   if (!generation) {
     return NextResponse.json({ error: "Generation not found" }, { status: 404 });
@@ -23,7 +13,7 @@ export async function GET(
 
   const session = getSessionById(generation.sessionId);
 
-  if (!session || (user.role !== ROLE.admin && session.userId !== user.id)) {
+  if (!session || (ctx.user.role !== ROLE.admin && session.userId !== ctx.user.id)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -37,5 +27,9 @@ export async function GET(
     aspectRatio: generation.aspectRatio,
     outputMode: generation.outputMode,
     explanationText: generation.explanationText,
+    errorMessage:
+      generation.status === "failed"
+        ? generation.publicErrorMessage ?? "生成失败，请稍后重试。"
+        : null,
   });
-}
+});
