@@ -45,11 +45,34 @@ export function getApiSettings() {
   };
 }
 
+export type PublicApiSettings = {
+  vertexProjectId: string;
+  vertexLocation: string;
+  imagenModel: string;
+  hasServiceAccountJson: boolean;
+  promptOptimizerModel: string;
+  maxConcurrency: number;
+  imageRootDir: string;
+};
+
+export function getPublicApiSettings(): PublicApiSettings {
+  const settings = getApiSettings();
+  return {
+    vertexProjectId: settings.vertexProjectId,
+    vertexLocation: settings.vertexLocation,
+    imagenModel: settings.imagenModel,
+    hasServiceAccountJson: settings.serviceAccountJson.trim().length > 0,
+    promptOptimizerModel: settings.promptOptimizerModel,
+    maxConcurrency: settings.maxConcurrency,
+    imageRootDir: settings.imageRootDir,
+  };
+}
+
 export function updateApiSettings(input: {
   vertexProjectId: string;
   vertexLocation: string;
   imagenModel: string;
-  serviceAccountJson: string;
+  serviceAccountJson?: string;
   promptOptimizerModel: string;
   maxConcurrency: number;
   imageRootDir: string;
@@ -67,15 +90,19 @@ export function updateApiSettings(input: {
       updated_at = excluded.updated_at
   `);
 
-  const rows = [
+  const rows: Array<readonly [string, string, string, number]> = [
     ["vertex.project_id", "text", input.vertexProjectId, 0],
     ["vertex.location", "text", input.vertexLocation, 0],
     ["vertex.imagen_model", "text", input.imagenModel, 0],
-    ["vertex.service_account_json", "text", input.serviceAccountJson, 1],
     ["prompt_optimizer.model", "text", input.promptOptimizerModel, 0],
     ["generation.max_concurrency", "number", String(input.maxConcurrency), 0],
     ["storage.image_root_dir", "text", input.imageRootDir, 0],
-  ] as const;
+  ];
+
+  const trimmedServiceAccount = (input.serviceAccountJson ?? "").trim();
+  if (trimmedServiceAccount.length > 0) {
+    rows.push(["vertex.service_account_json", "text", trimmedServiceAccount, 1]);
+  }
 
   const tx = db.transaction(() => {
     for (const [settingKey, settingType, valueText, isSecret] of rows) {

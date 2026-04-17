@@ -3,11 +3,11 @@ import Link from "next/link";
 import { ApiSettingsForm } from "@/components/admin/api-settings-form";
 import { LogoutButton } from "@/components/shared/logout-button";
 import { requireAdmin } from "@/server/auth/guards";
-import { getApiSettings } from "@/server/services/settings";
+import { getPublicApiSettings } from "@/server/services/settings";
 
 export default async function AdminApiSettingsPage() {
   await requireAdmin();
-  const settings = getApiSettings();
+  const settings = getPublicApiSettings();
 
   return (
     <main className="admin-shell min-h-screen px-4 py-6 md:px-8">

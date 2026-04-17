@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 
+import { readJsonBody } from "@/lib/http";
+import { resetPasswordSchema } from "@/lib/validators/auth";
 import { getCurrentUser } from "@/server/auth/session";
 import { isAdmin, resetUserPassword } from "@/server/services/users";
-import { resetPasswordSchema } from "@/lib/validators/auth";
 
 export async function PATCH(
   request: Request,
@@ -15,7 +16,15 @@ export async function PATCH(
   }
 
   const { userId } = await context.params;
-  const body = await request.json();
+  const body = await readJsonBody(request);
+
+  if (body === null) {
+    return NextResponse.json(
+      { error: "请求体不是合法的 JSON。" },
+      { status: 400 },
+    );
+  }
+
   const parsed = resetPasswordSchema.safeParse(body);
 
   if (!parsed.success) {

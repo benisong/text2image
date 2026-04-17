@@ -214,6 +214,12 @@ export function getJobById(jobId: string) {
   };
 }
 
+export class CreateMessageError extends Error {
+  constructor(public reason: "invalid_parent") {
+    super(reason);
+  }
+}
+
 export function createMessageAndGeneration(input: {
   sessionId: string;
   content: string;
@@ -227,6 +233,18 @@ export function createMessageAndGeneration(input: {
     const messageId = crypto.randomUUID();
     const generationId = crypto.randomUUID();
     const jobId = crypto.randomUUID();
+
+    if (input.parentGenerationId) {
+      const parent = db
+        .prepare(`SELECT session_id FROM generations WHERE id = ?`)
+        .get(input.parentGenerationId) as
+        | { session_id: string }
+        | undefined;
+
+      if (!parent || parent.session_id !== input.sessionId) {
+        throw new CreateMessageError("invalid_parent");
+      }
+    }
 
     db.prepare(`
       INSERT INTO chat_messages (

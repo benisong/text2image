@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { readJsonBody } from "@/lib/http";
 import { getCurrentUser } from "@/server/auth/session";
 import { createUser, isAdmin, listUsers } from "@/server/services/users";
 import { createUserSchema } from "@/lib/validators/auth";
@@ -21,7 +22,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "无权限" }, { status: 403 });
   }
 
-  const body = await request.json();
+  const body = await readJsonBody(request);
+
+  if (body === null) {
+    return NextResponse.json(
+      { error: "请求体不是合法的 JSON。" },
+      { status: 400 },
+    );
+  }
+
   const parsed = createUserSchema.safeParse(body);
 
   if (!parsed.success) {

@@ -1,12 +1,15 @@
 import "server-only";
 
 import { JOB_STATUS, OUTPUT_MODE } from "@/lib/constants";
+import { nowIso } from "@/lib/utils";
 import { buildCommentary } from "@/server/ai/commentary";
 import { buildOptimizedPrompt } from "@/server/ai/prompt-optimizer";
 import { generateImageWithVertex } from "@/server/ai/vertex-imagen";
+import { getDb } from "@/server/db";
 import {
   getGenerationById,
   getJobById,
+  listPendingJobs,
   markGenerationCompleted,
   markGenerationFailed,
   markGenerationProcessing,
@@ -16,66 +19,127 @@ import {
 import { getNumberSetting } from "@/server/services/settings";
 import { saveGenerationImage } from "@/server/storage/images";
 
-const globalForRunner = globalThis as typeof globalThis & {
-  __text2imageRunnerState?: {
-    activeCount: number;
-    scheduled: boolean;
-  };
+type RunnerState = {
+  activeCount: number;
+  draining: boolean;
+  recovered: boolean;
 };
 
-function getRunnerState() {
+const globalForRunner = globalThis as typeof globalThis & {
+  __text2imageRunnerState?: RunnerState;
+};
+
+function getRunnerState(): RunnerState {
   if (!globalForRunner.__text2imageRunnerState) {
     globalForRunner.__text2imageRunnerState = {
       activeCount: 0,
-      scheduled: false,
+      draining: false,
+      recovered: false,
     };
   }
 
   return globalForRunner.__text2imageRunnerState;
 }
 
-export function enqueueJob(jobId: string) {
+function recoverOrphanedJobs() {
   const state = getRunnerState();
 
-  if (!state.scheduled) {
-    state.scheduled = true;
-    setTimeout(() => {
-      state.scheduled = false;
-      void processJobs([jobId]);
-    }, 0);
+  if (state.recovered) {
+    return;
   }
+
+  state.recovered = true;
+
+  const now = nowIso();
+  getDb()
+    .prepare(
+      `UPDATE jobs SET status = ?, updated_at = ?, started_at = NULL
+       WHERE status = ?`,
+    )
+    .run(JOB_STATUS.waiting, now, JOB_STATUS.active);
 }
 
-async function processJobs(jobIds: string[]) {
+function claimNextWaitingJob(): string | null {
+  const db = getDb();
+  const now = nowIso();
+
+  const claim = db.transaction((): string | null => {
+    const pending = db
+      .prepare(
+        `SELECT id FROM jobs WHERE status = ? ORDER BY created_at ASC LIMIT 1`,
+      )
+      .get(JOB_STATUS.waiting) as { id: string } | undefined;
+
+    if (!pending) {
+      return null;
+    }
+
+    db.prepare(
+      `UPDATE jobs SET status = ?, updated_at = ?, started_at = COALESCE(started_at, ?)
+       WHERE id = ? AND status = ?`,
+    ).run(JOB_STATUS.active, now, now, pending.id, JOB_STATUS.waiting);
+
+    return pending.id;
+  });
+
+  return claim();
+}
+
+function scheduleProcessing() {
+  const state = getRunnerState();
+
+  if (state.draining) {
+    return;
+  }
+
+  state.draining = true;
+
+  setTimeout(() => {
+    state.draining = false;
+    void drainQueue();
+  }, 0);
+}
+
+async function drainQueue() {
   const state = getRunnerState();
   const maxConcurrency = getNumberSetting("generation.max_concurrency", 2);
 
-  for (const jobId of jobIds) {
-    if (state.activeCount >= maxConcurrency) {
+  while (state.activeCount < maxConcurrency) {
+    const jobId = claimNextWaitingJob();
+
+    if (!jobId) {
       return;
-    }
-
-    const job = getJobById(jobId);
-
-    if (!job || job.status !== JOB_STATUS.waiting) {
-      continue;
     }
 
     state.activeCount += 1;
 
     void runSingleJob(jobId).finally(() => {
       state.activeCount -= 1;
+      scheduleProcessing();
     });
   }
 }
 
+export function enqueueJob(jobId: string) {
+  void jobId;
+  recoverOrphanedJobs();
+  scheduleProcessing();
+}
+
+export function recoverPendingJobsOnStartup() {
+  recoverOrphanedJobs();
+
+  const pending = listPendingJobs();
+  if (pending.length > 0) {
+    scheduleProcessing();
+  }
+}
+
 export async function runSingleJob(jobId: string) {
-  const startedAt = new Date().toISOString();
   updateJobStatus({
     jobId,
     status: JOB_STATUS.active,
     progress: 10,
-    startedAt,
   });
 
   const job = getJobById(jobId);

@@ -1,12 +1,21 @@
 import { NextResponse } from "next/server";
 
+import { readJsonBody } from "@/lib/http";
 import { ROLE } from "@/lib/constants";
 import { loginSchema } from "@/lib/validators/auth";
 import { createUserSession, setSessionCookie } from "@/server/auth/session";
 import { authenticateUser } from "@/server/services/users";
 
 export async function POST(request: Request) {
-  const body = await request.json();
+  const body = await readJsonBody(request);
+
+  if (body === null) {
+    return NextResponse.json(
+      { error: "请求体不是合法的 JSON。" },
+      { status: 400 },
+    );
+  }
+
   const parsed = loginSchema.safeParse(body);
 
   if (!parsed.success) {
@@ -38,6 +47,7 @@ export async function POST(request: Request) {
       id: user.id,
       username: user.username,
       role: user.role,
+      mustChangePassword: user.mustChangePassword,
     },
   });
 }

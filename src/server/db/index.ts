@@ -51,6 +51,7 @@ function createDatabase() {
       display_name TEXT,
       is_active INTEGER NOT NULL DEFAULT 1,
       last_login_at TEXT,
+      must_change_password INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -159,9 +160,22 @@ function createDatabase() {
     CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
   `);
 
+  migrateSchema(db);
   bootstrapData(db);
 
   return db;
+}
+
+function migrateSchema(db: Database) {
+  const columns = db
+    .prepare(`PRAGMA table_info(users)`)
+    .all() as Array<{ name: string }>;
+
+  if (!columns.some((column) => column.name === "must_change_password")) {
+    db.exec(
+      `ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0`,
+    );
+  }
 }
 
 function upsertSetting(
@@ -198,20 +212,23 @@ function bootstrapData(db: Database) {
     .get(ROLE.admin) as { id: string } | undefined;
 
   if (!existingAdmin) {
+    const initialPassword = process.env.ADMIN_PASSWORD ?? DEFAULT_ADMIN_PASSWORD;
+    const mustChange =
+      !process.env.ADMIN_PASSWORD || initialPassword === DEFAULT_ADMIN_PASSWORD;
+
     db.prepare(`
       INSERT INTO users (
-        id, username, password_hash, role, display_name, is_active, created_at, updated_at
+        id, username, password_hash, role, display_name, is_active,
+        must_change_password, created_at, updated_at
       )
-      VALUES (@id, @username, @passwordHash, @role, @displayName, 1, @createdAt, @updatedAt)
+      VALUES (@id, @username, @passwordHash, @role, @displayName, 1, @mustChange, @createdAt, @updatedAt)
     `).run({
       id: crypto.randomUUID(),
       username: process.env.ADMIN_USERNAME ?? DEFAULT_ADMIN_USERNAME,
-      passwordHash: bcrypt.hashSync(
-        process.env.ADMIN_PASSWORD ?? DEFAULT_ADMIN_PASSWORD,
-        10,
-      ),
+      passwordHash: bcrypt.hashSync(initialPassword, 10),
       role: ROLE.admin,
       displayName: APP_NAME + " Admin",
+      mustChange: mustChange ? 1 : 0,
       createdAt: now,
       updatedAt: now,
     });
@@ -272,6 +289,18 @@ function bootstrapData(db: Database) {
 export function getDb() {
   if (!globalForDb.__text2imageDb) {
     globalForDb.__text2imageDb = createDatabase();
+    queueMicrotask(() => {
+      void (async () => {
+        try {
+          const { recoverPendingJobsOnStartup } = await import(
+            "@/server/jobs/runner"
+          );
+          recoverPendingJobsOnStartup();
+        } catch {
+          // runner recovery is best-effort
+        }
+      })();
+    });
   }
 
   return globalForDb.__text2imageDb;

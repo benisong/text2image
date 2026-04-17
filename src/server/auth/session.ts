@@ -9,16 +9,39 @@ import { findUserById } from "@/server/services/users";
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 
+function isCookieSecure() {
+  const flag = process.env.SESSION_COOKIE_SECURE;
+
+  if (flag === "true") {
+    return true;
+  }
+
+  if (flag === "false") {
+    return false;
+  }
+
+  // Default off: single-host HTTP deployments (e.g. docker-compose on LAN)
+  // otherwise drop the cookie entirely. Set SESSION_COOKIE_SECURE=true when
+  // serving over HTTPS.
+  return false;
+}
+
 export async function createUserSession(userId: string) {
   const db = getDb();
   const token = crypto.randomUUID() + crypto.randomUUID().replaceAll("-", "");
   const now = new Date();
   const expiresAt = new Date(now.getTime() + SESSION_TTL_MS).toISOString();
+  const nowIsoString = now.toISOString();
 
-  db.prepare(`
-    INSERT INTO auth_sessions (id, user_id, session_token, expires_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(crypto.randomUUID(), userId, token, expiresAt, now.toISOString(), now.toISOString());
+  const tx = db.transaction(() => {
+    db.prepare(`DELETE FROM auth_sessions WHERE user_id = ?`).run(userId);
+    db.prepare(`
+      INSERT INTO auth_sessions (id, user_id, session_token, expires_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(crypto.randomUUID(), userId, token, expiresAt, nowIsoString, nowIsoString);
+  });
+
+  tx();
 
   return {
     token,
@@ -31,7 +54,7 @@ export async function setSessionCookie(token: string, expiresAt: string) {
   store.set(APP_SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: isCookieSecure(),
     path: "/",
     expires: new Date(expiresAt),
   });

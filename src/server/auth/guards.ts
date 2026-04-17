@@ -12,6 +12,10 @@ export async function requireUser() {
     redirect("/login");
   }
 
+  if (user.mustChangePassword) {
+    redirect("/change-password");
+  }
+
   return user;
 }
 
@@ -20,6 +24,20 @@ export async function requireAdmin() {
 
   if (!user || !isAdmin(user)) {
     redirect("/admin/login");
+  }
+
+  if (user.mustChangePassword) {
+    redirect("/change-password");
+  }
+
+  return user;
+}
+
+export async function requireAuthenticatedUser() {
+  const user = await getCurrentUser();
+
+  if (!user) {
+    redirect("/login");
   }
 
   return user;

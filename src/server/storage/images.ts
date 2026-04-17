@@ -9,7 +9,28 @@ import { getTextSetting } from "@/server/services/settings";
 
 function imageRootDir() {
   const setting = getTextSetting("storage.image_root_dir", DEFAULT_IMAGE_ROOT);
-  return path.isAbsolute(setting) ? setting : resolveDataPath(setting);
+  const safe = isSandboxedRelative(setting) ? setting : DEFAULT_IMAGE_ROOT;
+  const resolved = path.resolve(resolveDataPath(safe));
+  const projectRoot = path.resolve(resolveDataPath("."));
+
+  if (resolved !== projectRoot && !resolved.startsWith(projectRoot + path.sep)) {
+    return path.resolve(resolveDataPath(DEFAULT_IMAGE_ROOT));
+  }
+
+  return resolved;
+}
+
+function isSandboxedRelative(value: string) {
+  if (!value) {
+    return false;
+  }
+  if (path.isAbsolute(value) || /^[a-zA-Z]:[\\/]/.test(value)) {
+    return false;
+  }
+  return !value
+    .replace(/\\/g, "/")
+    .split("/")
+    .some((segment) => segment === ".." || segment === ".");
 }
 
 export function sessionImageDir(sessionId: string) {
