@@ -1,0 +1,436 @@
+import "server-only";
+
+import { DEFAULT_VERTEX_MODEL, GENERATION_STATUS, JOB_STATUS } from "@/lib/constants";
+import { nowIso, parseJson, titleFromPrompt } from "@/lib/utils";
+import { getDb, transaction } from "@/server/db";
+import { deleteSessionImageDirectory } from "@/server/storage/images";
+
+type SessionRow = {
+  id: string;
+  user_id: string;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+  last_message_at: string;
+};
+
+export function listSessionsForUser(userId: string) {
+  const rows = getDb()
+    .prepare(`
+      SELECT id, user_id, title, created_at, updated_at, last_message_at
+      FROM sessions
+      WHERE user_id = ?
+      ORDER BY last_message_at DESC
+    `)
+    .all(userId) as SessionRow[];
+
+  return rows.map((row) => ({
+    id: row.id,
+    userId: row.user_id,
+    title: row.title || "新会话",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    lastMessageAt: row.last_message_at,
+  }));
+}
+
+export function createSession(userId: string, title = "新会话") {
+  const now = nowIso();
+  const id = crypto.randomUUID();
+
+  getDb()
+    .prepare(`
+      INSERT INTO sessions (id, user_id, title, status, created_at, updated_at, last_message_at)
+      VALUES (?, ?, ?, 'active', ?, ?, ?)
+    `)
+    .run(id, userId, title, now, now, now);
+
+  return id;
+}
+
+export function getSessionById(sessionId: string) {
+  const row = getDb()
+    .prepare(`
+      SELECT id, user_id, title, created_at, updated_at, last_message_at
+      FROM sessions
+      WHERE id = ?
+    `)
+    .get(sessionId) as SessionRow | undefined;
+
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    userId: row.user_id,
+    title: row.title || "新会话",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    lastMessageAt: row.last_message_at,
+  };
+}
+
+export function getMessagesForSession(sessionId: string) {
+  const rows = getDb()
+    .prepare(`
+      SELECT
+        m.id,
+        m.role,
+        m.message_type,
+        m.content_text,
+        m.created_at,
+        g.id as generation_id,
+        g.public_url,
+        g.output_mode,
+        g.explanation_text,
+        g.status as generation_status
+      FROM chat_messages m
+      LEFT JOIN generations g ON g.id = m.generation_id
+      WHERE m.session_id = ?
+      ORDER BY m.created_at ASC
+    `)
+    .all(sessionId) as Array<{
+    id: string;
+    role: string;
+    message_type: string;
+    content_text: string | null;
+    created_at: string;
+    generation_id: string | null;
+    public_url: string | null;
+    output_mode: string | null;
+    explanation_text: string | null;
+    generation_status: string | null;
+  }>;
+
+  return rows.map((row) => ({
+    id: row.id,
+    role: row.role,
+    messageType: row.message_type,
+    contentText: row.content_text,
+    createdAt: row.created_at,
+    generationId: row.generation_id,
+    publicUrl: row.public_url,
+    outputMode: row.output_mode,
+    explanationText: row.explanation_text,
+    generationStatus: row.generation_status,
+  }));
+}
+
+export function getGenerationById(generationId: string) {
+  const row = getDb()
+    .prepare(`
+      SELECT *
+      FROM generations
+      WHERE id = ?
+    `)
+    .get(generationId) as
+    | {
+        id: string;
+        session_id: string;
+        parent_generation_id: string | null;
+        original_prompt: string;
+        effective_prompt: string;
+        negative_prompt: string | null;
+        prompt_json: string;
+        seed: number | null;
+        keep_seed: number;
+        aspect_ratio: string;
+        mime_type: string;
+        status: string;
+        output_mode: string;
+        explanation_text: string | null;
+        explanation_status: string | null;
+        storage_path: string | null;
+        public_url: string | null;
+        file_size_bytes: number | null;
+        error_message: string | null;
+        created_at: string;
+        completed_at: string | null;
+      }
+    | undefined;
+
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    parentGenerationId: row.parent_generation_id,
+    originalPrompt: row.original_prompt,
+    effectivePrompt: row.effective_prompt,
+    negativePrompt: row.negative_prompt,
+    promptJson: parseJson(row.prompt_json, {}),
+    seed: row.seed,
+    keepSeed: Boolean(row.keep_seed),
+    aspectRatio: row.aspect_ratio,
+    mimeType: row.mime_type,
+    status: row.status,
+    outputMode: row.output_mode,
+    explanationText: row.explanation_text,
+    explanationStatus: row.explanation_status,
+    storagePath: row.storage_path,
+    publicUrl: row.public_url,
+    fileSizeBytes: row.file_size_bytes,
+    errorMessage: row.error_message,
+    createdAt: row.created_at,
+    completedAt: row.completed_at,
+  };
+}
+
+export function getJobById(jobId: string) {
+  const row = getDb()
+    .prepare(`
+      SELECT j.id, j.generation_id, j.session_id, s.user_id, j.status, j.progress, j.error_message
+      FROM jobs j
+      JOIN sessions s ON s.id = j.session_id
+      WHERE j.id = ?
+    `)
+    .get(jobId) as
+    | {
+        id: string;
+        generation_id: string;
+        session_id: string;
+        user_id: string;
+        status: string;
+        progress: number;
+        error_message: string | null;
+      }
+    | undefined;
+
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    generationId: row.generation_id,
+    sessionId: row.session_id,
+    userId: row.user_id,
+    status: row.status,
+    progress: row.progress,
+    errorMessage: row.error_message,
+  };
+}
+
+export function createMessageAndGeneration(input: {
+  sessionId: string;
+  content: string;
+  mode: "new_image" | "modify_last";
+  parentGenerationId?: string | null;
+  keepSeed: boolean;
+  outputMode: "image_only" | "image_with_commentary";
+}) {
+  return transaction((db) => {
+    const now = nowIso();
+    const messageId = crypto.randomUUID();
+    const generationId = crypto.randomUUID();
+    const jobId = crypto.randomUUID();
+
+    db.prepare(`
+      INSERT INTO chat_messages (
+        id, session_id, role, message_type, content_text, generation_id, job_id, created_at
+      )
+      VALUES (?, ?, 'user', 'text', ?, ?, ?, ?)
+    `).run(messageId, input.sessionId, input.content, generationId, jobId, now);
+
+    db.prepare(`
+      INSERT INTO generations (
+        id, session_id, parent_generation_id, trigger_message_id, provider, model,
+        original_prompt, effective_prompt, negative_prompt, prompt_json, seed, keep_seed,
+        aspect_ratio, image_size, mime_type, status, vertex_request_id, output_mode,
+        explanation_text, explanation_status, storage_bucket, storage_path, public_url,
+        width, height, file_size_bytes, error_code, error_message, created_at, updated_at, completed_at
+      )
+      VALUES (?, ?, ?, ?, 'vertex_ai', ?, ?, ?, ?, ?, NULL, ?, '1:1', NULL, 'image/png', ?, NULL, ?, NULL, 'none', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, NULL)
+    `).run(
+      generationId,
+      input.sessionId,
+      input.parentGenerationId || null,
+      messageId,
+      DEFAULT_VERTEX_MODEL,
+      input.content,
+      input.content,
+      null,
+      JSON.stringify({}),
+      input.keepSeed ? 1 : 0,
+      GENERATION_STATUS.queued,
+      input.outputMode,
+      now,
+      now,
+    );
+
+    db.prepare(`
+      INSERT INTO jobs (
+        id, session_id, generation_id, job_type, queue_name, queue_job_id,
+        status, attempt_count, progress, error_message, created_at, updated_at
+      )
+      VALUES (?, ?, ?, 'image_generation', 'image-generation', ?, ?, 0, 0, NULL, ?, ?)
+    `).run(jobId, input.sessionId, generationId, jobId, JOB_STATUS.waiting, now, now);
+
+    db.prepare(`
+      UPDATE sessions
+      SET title = COALESCE(NULLIF(title, ''), ?), updated_at = ?, last_message_at = ?
+      WHERE id = ?
+    `).run(titleFromPrompt(input.content), now, now, input.sessionId);
+
+    return { messageId, generationId, jobId };
+  });
+}
+
+export function updateJobStatus(input: {
+  jobId: string;
+  status: string;
+  progress: number;
+  errorMessage?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+}) {
+  getDb()
+    .prepare(`
+      UPDATE jobs
+      SET status = ?, progress = ?, error_message = ?, updated_at = ?, started_at = COALESCE(?, started_at), finished_at = ?
+      WHERE id = ?
+    `)
+    .run(
+      input.status,
+      input.progress,
+      input.errorMessage ?? null,
+      nowIso(),
+      input.startedAt ?? null,
+      input.finishedAt ?? null,
+      input.jobId,
+    );
+}
+
+export function updateGenerationQueuedPayload(input: {
+  generationId: string;
+  effectivePrompt: string;
+  negativePrompt: string;
+  promptJson: object;
+  seed: number;
+  aspectRatio: string;
+  explanationStatus: string;
+}) {
+  getDb()
+    .prepare(`
+      UPDATE generations
+      SET effective_prompt = ?, negative_prompt = ?, prompt_json = ?, seed = ?, aspect_ratio = ?, explanation_status = ?, updated_at = ?
+      WHERE id = ?
+    `)
+    .run(
+      input.effectivePrompt,
+      input.negativePrompt,
+      JSON.stringify(input.promptJson),
+      input.seed,
+      input.aspectRatio,
+      input.explanationStatus,
+      nowIso(),
+      input.generationId,
+    );
+}
+
+export function markGenerationProcessing(generationId: string) {
+  getDb()
+    .prepare(`UPDATE generations SET status = ?, updated_at = ? WHERE id = ?`)
+    .run(GENERATION_STATUS.generating, nowIso(), generationId);
+}
+
+export function markGenerationCompleted(input: {
+  generationId: string;
+  mimeType: string;
+  effectivePrompt: string;
+  publicUrl: string;
+  storagePath: string;
+  fileSizeBytes: number;
+  explanationText: string | null;
+  explanationStatus: string;
+}) {
+  const now = nowIso();
+  getDb()
+    .prepare(`
+      UPDATE generations
+      SET status = ?, mime_type = ?, effective_prompt = ?, public_url = ?, storage_path = ?,
+          file_size_bytes = ?, explanation_text = ?, explanation_status = ?, updated_at = ?, completed_at = ?
+      WHERE id = ?
+    `)
+    .run(
+      GENERATION_STATUS.completed,
+      input.mimeType,
+      input.effectivePrompt,
+      input.publicUrl,
+      input.storagePath,
+      input.fileSizeBytes,
+      input.explanationText,
+      input.explanationStatus,
+      now,
+      now,
+      input.generationId,
+    );
+
+  const generation = getGenerationById(input.generationId);
+
+  if (generation) {
+    getDb()
+      .prepare(`
+        INSERT INTO chat_messages (id, session_id, role, message_type, content_text, generation_id, job_id, created_at)
+        VALUES (?, ?, 'assistant', 'image', ?, ?, NULL, ?)
+      `)
+      .run(
+        crypto.randomUUID(),
+        generation.sessionId,
+        input.explanationText,
+        input.generationId,
+        now,
+      );
+  }
+}
+
+export function markGenerationFailed(generationId: string, message: string) {
+  getDb()
+    .prepare(`
+      UPDATE generations
+      SET status = ?, error_message = ?, explanation_status = ?, updated_at = ?
+      WHERE id = ?
+    `)
+    .run(GENERATION_STATUS.failed, message, "failed", nowIso(), generationId);
+}
+
+export function deleteSessionWithAssets(sessionId: string) {
+  transaction((db) => {
+    deleteSessionImageDirectory(sessionId);
+    db.prepare(`DELETE FROM sessions WHERE id = ?`).run(sessionId);
+  });
+}
+
+export function listPendingJobs() {
+  return getDb()
+    .prepare(`
+      SELECT id, generation_id
+      FROM jobs
+      WHERE status IN (?, ?)
+      ORDER BY created_at ASC
+    `)
+    .all(JOB_STATUS.waiting, JOB_STATUS.active) as Array<{
+    id: string;
+    generation_id: string;
+  }>;
+}
+
+export function listSessionsForAdmin() {
+  return getDb()
+    .prepare(`
+      SELECT s.id, s.title, u.username, s.created_at, s.last_message_at
+      FROM sessions s
+      JOIN users u ON u.id = s.user_id
+      ORDER BY s.last_message_at DESC
+    `)
+    .all() as Array<{
+    id: string;
+    title: string | null;
+    username: string;
+    created_at: string;
+    last_message_at: string;
+  }>;
+}
