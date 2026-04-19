@@ -3,10 +3,13 @@ import "server-only";
 import {
   DEFAULT_IMAGE_API_BASE_URL,
   DEFAULT_IMAGE_API_MODEL,
+  DEFAULT_IMAGE_API_ROUTE,
   DEFAULT_IMAGE_API_SIZE,
   DEFAULT_IMAGE_ROOT,
   DEFAULT_MAX_CONCURRENCY,
 } from "@/lib/constants";
+
+export type ImageApiRoute = "auto" | "images" | "chat";
 import { getDb } from "@/server/db";
 
 export function getSetting(key: string) {
@@ -37,11 +40,16 @@ export function getNumberSetting(key: string, fallback: number) {
 }
 
 export function getApiSettings() {
+  const routeRaw = getTextSetting("image_api.route", DEFAULT_IMAGE_API_ROUTE);
+  const imageApiRoute: ImageApiRoute =
+    routeRaw === "images" || routeRaw === "chat" ? routeRaw : "auto";
+
   return {
     imageApiBaseUrl: getTextSetting("image_api.base_url", DEFAULT_IMAGE_API_BASE_URL),
     imageApiKey: getTextSetting("image_api.key"),
     imageApiModel: getTextSetting("image_api.model", DEFAULT_IMAGE_API_MODEL),
     imageApiSize: getTextSetting("image_api.size", DEFAULT_IMAGE_API_SIZE),
+    imageApiRoute,
     promptOptimizerModel: getTextSetting("prompt_optimizer.model", "template"),
     maxConcurrency: getNumberSetting(
       "generation.max_concurrency",
@@ -55,6 +63,7 @@ export type PublicApiSettings = {
   imageApiBaseUrl: string;
   imageApiModel: string;
   imageApiSize: string;
+  imageApiRoute: ImageApiRoute;
   hasImageApiKey: boolean;
   promptOptimizerModel: string;
   maxConcurrency: number;
@@ -67,6 +76,7 @@ export function getPublicApiSettings(): PublicApiSettings {
     imageApiBaseUrl: settings.imageApiBaseUrl,
     imageApiModel: settings.imageApiModel,
     imageApiSize: settings.imageApiSize,
+    imageApiRoute: settings.imageApiRoute,
     hasImageApiKey: settings.imageApiKey.trim().length > 0,
     promptOptimizerModel: settings.promptOptimizerModel,
     maxConcurrency: settings.maxConcurrency,
@@ -78,6 +88,7 @@ export function updateApiSettings(input: {
   imageApiBaseUrl: string;
   imageApiModel: string;
   imageApiSize: string;
+  imageApiRoute: ImageApiRoute;
   imageApiKey?: string;
   promptOptimizerModel: string;
   maxConcurrency: number;
@@ -100,6 +111,7 @@ export function updateApiSettings(input: {
     ["image_api.base_url", "text", input.imageApiBaseUrl, 0],
     ["image_api.model", "text", input.imageApiModel, 0],
     ["image_api.size", "text", input.imageApiSize, 0],
+    ["image_api.route", "text", input.imageApiRoute, 0],
     ["prompt_optimizer.model", "text", input.promptOptimizerModel, 0],
     ["generation.max_concurrency", "number", String(input.maxConcurrency), 0],
     ["storage.image_root_dir", "text", input.imageRootDir, 0],

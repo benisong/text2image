@@ -28,6 +28,7 @@ export const apiSettingsSchema = z.object({
     .trim()
     .regex(/^\d{2,5}x\d{2,5}$/i, { message: "尺寸格式应为 WIDTHxHEIGHT，例如 1024x1024" })
     .default("1024x1024"),
+  imageApiRoute: z.enum(["auto", "images", "chat"]).default("auto"),
   promptOptimizerModel: z.string().trim().optional().default(""),
   maxConcurrency: z.coerce.number().int().min(1).max(4),
   imageRootDir: z

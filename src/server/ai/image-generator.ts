@@ -12,6 +12,7 @@ type ImageApiSettings = {
   imageApiKey: string;
   imageApiModel: string;
   imageApiSize: string;
+  imageApiRoute: "auto" | "images" | "chat";
 };
 
 type GeneratedImage = {
@@ -68,6 +69,7 @@ export async function generateImage(input: GenerateImageInput): Promise<Generate
   const apiKey = (settings.imageApiKey || "").trim();
   const model = (settings.imageApiModel || "").trim();
   const defaultSize = (settings.imageApiSize || "1024x1024").trim();
+  const route = settings.imageApiRoute ?? "auto";
 
   if (!baseUrl || !apiKey || !model) {
     throw new ImageGenerationError(
@@ -79,10 +81,18 @@ export async function generateImage(input: GenerateImageInput): Promise<Generate
   const size = aspectRatioToSize(input.aspectRatio, defaultSize);
   const resolved: ResolvedSettings = { baseUrl, apiKey, model, size };
 
+  if (route === "chat") {
+    return await generateViaChatApi(resolved, input);
+  }
+
   try {
     return await generateViaImagesApi(resolved, input);
   } catch (error) {
-    if (error instanceof ImageGenerationError && error.canFallbackToChat) {
+    if (
+      route === "auto" &&
+      error instanceof ImageGenerationError &&
+      error.canFallbackToChat
+    ) {
       console.warn(
         `[image-generator] images endpoint 不支持 "${model}"，回退到 chat completions`,
       );

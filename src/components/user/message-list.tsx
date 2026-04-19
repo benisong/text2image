@@ -101,18 +101,19 @@ function MessageItem({
 }) {
   const isPending = PENDING_STATUSES.has(message.generationStatus ?? "");
   const isFailed = message.generationStatus === "failed";
+  const isAssistant = message.role === "assistant";
 
   return (
     <article
       className={`rounded-3xl border p-4 ${
-        message.role === "user"
-          ? "ml-auto max-w-3xl border-accent/25 bg-white"
-          : "border-line bg-[#fffaf3]"
+        isAssistant
+          ? "border-line bg-[#fffaf3]"
+          : "ml-auto max-w-3xl border-accent/25 bg-white"
       }`}
     >
       <div className="flex items-center justify-between gap-4">
         <span className="text-xs font-semibold uppercase tracking-[0.25em] text-muted">
-          {message.role === "user" ? "用户" : "系统"}
+          {isAssistant ? "系统" : "用户"}
         </span>
         <span className="text-xs text-muted">
           {formatDateTime(message.createdAt)}
@@ -123,7 +124,8 @@ function MessageItem({
           {message.contentText}
         </p>
       ) : null}
-      {message.publicUrl ? (
+      {/* 图片只在系统气泡里展示，避免和用户气泡里的同张图重复 */}
+      {isAssistant && message.publicUrl ? (
         <div className="mt-4 overflow-hidden rounded-3xl border border-line bg-white">
           <Image
             alt="生成图片"
@@ -136,8 +138,8 @@ function MessageItem({
           />
         </div>
       ) : null}
-      {isPending ? <PendingIndicator /> : null}
-      {isFailed && message.generationId ? (
+      {!isAssistant && isPending ? <PendingIndicator /> : null}
+      {!isAssistant && isFailed && message.generationId ? (
         <RetryBlock
           generationId={message.generationId}
           message={message.generationPublicError ?? "生成失败，请稍后重试。"}

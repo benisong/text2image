@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { ChatComposer } from "@/components/user/chat-composer";
 import { MessageList, type MessageView } from "@/components/user/message-list";
@@ -211,13 +211,41 @@ function ChatPanelInner({
     };
   }, [hasPending, sessionId]);
 
+  // 自动滚到底；用户主动往上滑后不打扰
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
+  const lastSignatureRef = useRef("");
+
+  const messagesSignature = `${messages.length}|${
+    messages[messages.length - 1]?.id ?? ""
+  }|${messages[messages.length - 1]?.generationStatus ?? ""}`;
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (lastSignatureRef.current === "") {
+      // 初次挂载：直接到底
+      el.scrollTop = el.scrollHeight;
+    } else if (stickToBottomRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+    lastSignatureRef.current = messagesSignature;
+  }, [messagesSignature]);
+
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottomRef.current = distanceFromBottom < 80;
+  };
+
   return (
-    <>
-      <ChatComposer
-        latestGenerationId={latestGenerationId}
-        onSubmit={handleSubmit}
-      />
-      <div className="card min-h-[520px] p-5">
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className="card min-h-0 flex-1 overflow-y-auto p-4 md:p-5"
+      >
         <MessageList
           messages={messages}
           hasMore={hasMore}
@@ -225,7 +253,16 @@ function ChatPanelInner({
           onRetry={handleRetry}
         />
       </div>
-    </>
+      <div className="shrink-0">
+        <ChatComposer
+          latestGenerationId={latestGenerationId}
+          onSubmit={async (payload) => {
+            stickToBottomRef.current = true;
+            await handleSubmit(payload);
+          }}
+        />
+      </div>
+    </div>
   );
 }
 

@@ -12,6 +12,7 @@ import {
   DEFAULT_ADMIN_USERNAME,
   DEFAULT_IMAGE_API_BASE_URL,
   DEFAULT_IMAGE_API_MODEL,
+  DEFAULT_IMAGE_API_ROUTE,
   DEFAULT_IMAGE_API_SIZE,
   DEFAULT_IMAGE_ROOT,
   DEFAULT_MAX_CONCURRENCY,
@@ -289,6 +290,13 @@ function bootstrapData(db: Database) {
     "image_api.size",
     "text",
     process.env.IMAGE_API_SIZE ?? DEFAULT_IMAGE_API_SIZE,
+    null,
+  );
+  upsertSetting(
+    db,
+    "image_api.route",
+    "text",
+    process.env.IMAGE_API_ROUTE ?? DEFAULT_IMAGE_API_ROUTE,
     null,
   );
   upsertSetting(

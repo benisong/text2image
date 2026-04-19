@@ -3,10 +3,13 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
+type ImageApiRoute = "auto" | "images" | "chat";
+
 type PublicApiSettings = {
   imageApiBaseUrl: string;
   imageApiModel: string;
   imageApiSize: string;
+  imageApiRoute: ImageApiRoute;
   hasImageApiKey: boolean;
   promptOptimizerModel: string;
   maxConcurrency: number;
@@ -28,6 +31,7 @@ export function ApiSettingsForm({ initial }: { initial: PublicApiSettings }) {
     imageApiBaseUrl: initial.imageApiBaseUrl,
     imageApiModel: initial.imageApiModel,
     imageApiSize: initial.imageApiSize,
+    imageApiRoute: initial.imageApiRoute ?? "auto",
     promptOptimizerModel: initial.promptOptimizerModel,
     maxConcurrency: initial.maxConcurrency,
     imageRootDir: initial.imageRootDir,
@@ -177,6 +181,23 @@ export function ApiSettingsForm({ initial }: { initial: PublicApiSettings }) {
             value={form.imageApiSize}
             onChange={(event) => patch("imageApiSize", event.target.value)}
           />
+        </label>
+        <label className="space-y-2">
+          <span className="text-sm font-medium">接口协议</span>
+          <select
+            className="field"
+            value={form.imageApiRoute}
+            onChange={(event) =>
+              patch("imageApiRoute", event.target.value as ImageApiRoute)
+            }
+          >
+            <option value="auto">自动（先试 images，失败回退 chat）</option>
+            <option value="images">始终 /v1/images/generations</option>
+            <option value="chat">始终 /v1/chat/completions（如 gemini 图像）</option>
+          </select>
+          <p className="text-xs text-muted">
+            DALL·E / FLUX / SD 选 images；Gemini 2.5 Image、聊天式出图模型选 chat。
+          </p>
         </label>
         <label className="space-y-2">
           <span className="text-sm font-medium">Prompt 优化模型</span>

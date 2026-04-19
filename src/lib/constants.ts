@@ -5,6 +5,7 @@ export const DEFAULT_ADMIN_PASSWORD = "admin123456";
 export const DEFAULT_IMAGE_API_BASE_URL = "https://api.openai.com/v1";
 export const DEFAULT_IMAGE_API_MODEL = "dall-e-3";
 export const DEFAULT_IMAGE_API_SIZE = "1024x1024";
+export const DEFAULT_IMAGE_API_ROUTE = "auto";
 export const DEFAULT_IMAGE_ROOT = "data/images";
 export const DEFAULT_MAX_CONCURRENCY = 2;
 export const DEFAULT_NEGATIVE_PROMPT =

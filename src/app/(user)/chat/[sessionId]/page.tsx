@@ -30,28 +30,28 @@ export default async function SessionPage({
   const { messages, hasMore } = getMessagesForSession(sessionId);
 
   return (
-    <main className="user-shell min-h-screen px-4 py-6 md:px-8">
-      <div className="mx-auto flex max-w-7xl items-start justify-between gap-4">
+    <main className="user-shell flex h-screen flex-col overflow-hidden px-4 py-4 md:px-8">
+      <div className="mx-auto flex w-full max-w-7xl shrink-0 items-start justify-between gap-4">
         <div>
           <p className="text-sm uppercase tracking-[0.3em] text-muted">User Console</p>
-          <h1 className="mt-2 text-3xl font-semibold">{currentSession.title}</h1>
-          <p className="mt-2 text-sm text-muted">当前用户：{user.username}</p>
+          <h1 className="mt-1 text-2xl font-semibold">{currentSession.title}</h1>
+          <p className="mt-1 text-xs text-muted">当前用户：{user.username}</p>
         </div>
         <LogoutButton redirectTo="/login" />
       </div>
-      <div className="mx-auto mt-8 grid max-w-7xl gap-6 lg:grid-cols-[320px_1fr]">
-        <aside className="space-y-4">
-          <div className="card p-5">
+      <div className="mx-auto mt-4 grid min-h-0 w-full max-w-7xl flex-1 gap-6 lg:grid-cols-[300px_1fr]">
+        <aside className="flex min-h-0 flex-col gap-4 overflow-y-auto pr-1">
+          <div className="card p-4">
             <CreateSessionButton />
-            <div className="mt-4">
+            <div className="mt-3">
               <DeleteSessionButton sessionId={sessionId} />
             </div>
           </div>
-          <div className="card p-4">
-            <h2 className="text-sm font-semibold uppercase tracking-[0.25em] text-muted">
+          <div className="card p-3">
+            <h2 className="px-1 text-xs font-semibold uppercase tracking-[0.25em] text-muted">
               会话列表
             </h2>
-            <div className="mt-4 space-y-2">
+            <div className="mt-3 space-y-2">
               {sessions.map((session) => {
                 const active = session.id === sessionId;
                 return (
@@ -59,13 +59,13 @@ export default async function SessionPage({
                     key={session.id}
                     href={`/chat/${session.id}`}
                     prefetch
-                    className={`block rounded-2xl border px-4 py-3 transition ${
+                    className={`block rounded-2xl border px-3 py-2 transition ${
                       active
                         ? "border-accent bg-accent/8"
                         : "border-line bg-white hover:border-accent/40"
                     }`}
                   >
-                    <p className="font-medium">{session.title}</p>
+                    <p className="truncate text-sm font-medium">{session.title}</p>
                     <p className="mt-1 text-xs text-muted">
                       {formatDateTime(session.lastMessageAt)}
                     </p>
@@ -75,7 +75,7 @@ export default async function SessionPage({
             </div>
           </div>
         </aside>
-        <section className="space-y-4">
+        <section className="min-h-0">
           <ChatPanel
             sessionId={sessionId}
             initialMessages={messages}
