@@ -182,10 +182,14 @@ export function ApiSettingsForm({ initial }: { initial: PublicApiSettings }) {
           <span className="text-sm font-medium">Prompt 优化模型</span>
           <input
             className="field"
-            placeholder="template"
+            list="image-api-models"
+            placeholder="可选：填一个 LLM 模型名；也可以手动输入 template"
             value={form.promptOptimizerModel}
             onChange={(event) => patch("promptOptimizerModel", event.target.value)}
           />
+          <p className="text-xs text-muted">
+            共用上方拉到的模型列表；目前仅做保存，暂未接入调用。
+          </p>
         </label>
         <label className="space-y-2">
           <span className="text-sm font-medium">最大并发</span>
