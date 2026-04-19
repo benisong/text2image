@@ -50,8 +50,8 @@ function ChatPanelInner({
   }, [messages]);
 
   const handleSubmit = async (payload: SubmitPayload) => {
-    const tempMessageId = `tmp-msg-${crypto.randomUUID()}`;
-    const tempGenerationId = `tmp-gen-${crypto.randomUUID()}`;
+    const tempMessageId = `tmp-msg-${tempId()}`;
+    const tempGenerationId = `tmp-gen-${tempId()}`;
     const now = new Date().toISOString();
 
     const optimistic: MessageView = {
@@ -227,6 +227,11 @@ function ChatPanelInner({
       </div>
     </>
   );
+}
+
+function tempId(): string {
+  // 浏览器在 HTTP 直连时没有 crypto.randomUUID，这里只是给本地占位 id 用，无需密码学强度
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function mergeMessages(
