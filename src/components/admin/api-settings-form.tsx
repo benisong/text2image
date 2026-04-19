@@ -183,12 +183,14 @@ export function ApiSettingsForm({ initial }: { initial: PublicApiSettings }) {
           <input
             className="field"
             list="image-api-models"
-            placeholder="可选：填一个 LLM 模型名；也可以手动输入 template"
+            placeholder="可选：填 chat 模型 (gpt-4o-mini 等)；template 表示不走 LLM"
             value={form.promptOptimizerModel}
             onChange={(event) => patch("promptOptimizerModel", event.target.value)}
           />
           <p className="text-xs text-muted">
-            共用上方拉到的模型列表；目前仅做保存，暂未接入调用。
+            留空 / 填 <code>template</code> / <code>none</code>：直接把用户输入送给图像 API。
+            <br />
+            填 chat 模型名：先调 <code>/v1/chat/completions</code> 把自然语言改写成英文图像 prompt，再送图像 API。共用上方的 API Base URL 和 API Key。
           </p>
         </label>
         <label className="space-y-2">

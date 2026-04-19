@@ -8,6 +8,7 @@ import {
   ImageGenerationError,
 } from "@/server/ai/image-generator";
 import { buildOptimizedPrompt } from "@/server/ai/prompt-optimizer";
+import { optimizePromptWithLlm } from "@/server/ai/prompt-llm";
 import { getDb } from "@/server/db";
 import {
   getGenerationById,
@@ -176,7 +177,7 @@ export async function runSingleJob(jobId: string) {
       ? getGenerationById(generation.parentGenerationId)
       : null;
 
-    const optimized = buildOptimizedPrompt({
+    const baseline = buildOptimizedPrompt({
       content: generation.originalPrompt,
       mode: parent ? "modify_last" : "new_image",
       keepSeed: generation.keepSeed,
@@ -192,6 +193,23 @@ export async function runSingleJob(jobId: string) {
           }
         : null,
     });
+
+    // 若管理端配置了 chat 模型，先用 LLM 把自然语言改写成英文图像 prompt。
+    // 失败 / 未配置时静默回落到模板产物，不阻塞生图。
+    const llm = await optimizePromptWithLlm({
+      originalPrompt: generation.originalPrompt,
+      mode: parent ? "modify_last" : "new_image",
+      parentPrompt: parent?.effectivePrompt ?? null,
+    });
+
+    const optimized = llm
+      ? {
+          ...baseline,
+          prompt: llm.prompt,
+          promptSource: "llm" as const,
+          optimizerModel: llm.model,
+        }
+      : { ...baseline, promptSource: "template" as const };
 
     updateGenerationQueuedPayload({
       generationId: generation.id,
