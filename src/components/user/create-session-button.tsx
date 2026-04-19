@@ -19,7 +19,10 @@ export function CreateSessionButton() {
         body: JSON.stringify({ title: "新会话" }),
       });
 
-      const data = (await response.json()) as { id?: string; error?: string };
+      const data = (await response.json().catch(() => ({}))) as {
+        id?: string;
+        error?: string;
+      };
 
       if (!response.ok || !data.id) {
         setError(data.error || "创建会话失败。");
@@ -27,7 +30,6 @@ export function CreateSessionButton() {
       }
 
       router.push(`/chat/${data.id}`);
-      router.refresh();
     });
   };
 

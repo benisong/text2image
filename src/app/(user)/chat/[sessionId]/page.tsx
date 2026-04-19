@@ -2,10 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { LogoutButton } from "@/components/shared/logout-button";
-import { ChatComposer } from "@/components/user/chat-composer";
+import { ChatPanel } from "@/components/user/chat-panel";
 import { CreateSessionButton } from "@/components/user/create-session-button";
 import { DeleteSessionButton } from "@/components/user/delete-session-button";
-import { MessageList } from "@/components/user/message-list";
 import { formatDateTime } from "@/lib/utils";
 import { requireUser } from "@/server/auth/guards";
 import {
@@ -29,8 +28,6 @@ export default async function SessionPage({
 
   const sessions = listSessionsForUser(user.id);
   const { messages, hasMore } = getMessagesForSession(sessionId);
-  const latestGeneration =
-    [...messages].reverse().find((message) => message.generationId)?.generationId ?? null;
 
   return (
     <main className="user-shell min-h-screen px-4 py-6 md:px-8">
@@ -61,6 +58,7 @@ export default async function SessionPage({
                   <Link
                     key={session.id}
                     href={`/chat/${session.id}`}
+                    prefetch
                     className={`block rounded-2xl border px-4 py-3 transition ${
                       active
                         ? "border-accent bg-accent/8"
@@ -78,14 +76,11 @@ export default async function SessionPage({
           </div>
         </aside>
         <section className="space-y-4">
-          <ChatComposer sessionId={sessionId} latestGenerationId={latestGeneration} />
-          <div className="card min-h-[520px] p-5">
-            <MessageList
-              sessionId={sessionId}
-              initialMessages={messages}
-              initialHasMore={hasMore}
-            />
-          </div>
+          <ChatPanel
+            sessionId={sessionId}
+            initialMessages={messages}
+            initialHasMore={hasMore}
+          />
         </section>
       </div>
     </main>

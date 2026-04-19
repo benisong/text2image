@@ -1,8 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 
 import { formatDateTime } from "@/lib/utils";
 
@@ -21,81 +20,35 @@ export type MessageView = {
 };
 
 type MessageListProps = {
-  sessionId: string;
-  initialMessages: MessageView[];
-  initialHasMore: boolean;
+  messages: MessageView[];
+  hasMore: boolean;
+  onLoadMore: () => Promise<{ ok: true } | { ok: false; error: string }>;
+  onRetry: (generationId: string) => Promise<void>;
 };
 
 const PENDING_STATUSES = new Set(["queued", "generating"]);
 
-export function MessageList(props: MessageListProps) {
-  return (
-    <MessageListInner
-      key={messagesSignature(props.initialMessages)}
-      {...props}
-    />
-  );
-}
-
-function messagesSignature(messages: MessageView[]) {
-  if (messages.length === 0) {
-    return "empty";
-  }
-  const last = messages[messages.length - 1];
-  return `${messages.length}:${last.id}:${last.generationStatus ?? ""}`;
-}
-
-function MessageListInner({
-  sessionId,
-  initialMessages,
-  initialHasMore,
+export function MessageList({
+  messages,
+  hasMore,
+  onLoadMore,
+  onRetry,
 }: MessageListProps) {
-  const router = useRouter();
-  const [messages, setMessages] = useState<MessageView[]>(initialMessages);
-  const [hasMore, setHasMore] = useState(initialHasMore);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadError, setLoadError] = useState("");
 
-  const pendingIds = messages
-    .filter(
-      (message) =>
-        message.generationId &&
-        PENDING_STATUSES.has(message.generationStatus ?? ""),
-    )
-    .map((message) => message.generationId as string);
-
-  usePendingPolling(pendingIds, () => router.refresh());
-
-  const loadMore = useCallback(async () => {
-    if (loadingMore || messages.length === 0) {
-      return;
-    }
+  const handleLoadMore = async () => {
     setLoadError("");
     setLoadingMore(true);
     try {
-      const oldest = messages[0].createdAt;
-      const response = await fetch(
-        `/api/sessions/${sessionId}/messages?before=${encodeURIComponent(oldest)}&limit=50`,
-      );
-
-      if (!response.ok) {
-        setLoadError("加载更早的消息失败。");
-        return;
+      const result = await onLoadMore();
+      if (!result.ok) {
+        setLoadError(result.error);
       }
-
-      const data = (await response.json()) as {
-        messages: MessageView[];
-        hasMore: boolean;
-      };
-
-      setMessages((current) => [...data.messages, ...current]);
-      setHasMore(data.hasMore);
-    } catch {
-      setLoadError("加载更早的消息失败。");
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, messages, sessionId]);
+  };
 
   if (messages.length === 0) {
     return (
@@ -118,7 +71,7 @@ function MessageListInner({
           <button
             type="button"
             className="btn-secondary text-sm"
-            onClick={loadMore}
+            onClick={handleLoadMore}
             disabled={loadingMore}
           >
             {loadingMore ? "加载中..." : "加载更早消息"}
@@ -129,13 +82,23 @@ function MessageListInner({
         </div>
       ) : null}
       {messages.map((message) => (
-        <MessageItem key={message.id} message={message} />
+        <MessageItem
+          key={message.id}
+          message={message}
+          onRetry={onRetry}
+        />
       ))}
     </div>
   );
 }
 
-function MessageItem({ message }: { message: MessageView }) {
+function MessageItem({
+  message,
+  onRetry,
+}: {
+  message: MessageView;
+  onRetry: (generationId: string) => Promise<void>;
+}) {
   const isPending = PENDING_STATUSES.has(message.generationStatus ?? "");
   const isFailed = message.generationStatus === "failed";
 
@@ -169,50 +132,51 @@ function MessageItem({ message }: { message: MessageView }) {
             width={1200}
             height={1200}
             unoptimized
+            loading="lazy"
           />
         </div>
       ) : null}
-      {isPending ? (
-        <p className="mt-3 text-sm text-accent">
-          正在生成，进度会自动更新。
-        </p>
-      ) : null}
+      {isPending ? <PendingIndicator /> : null}
       {isFailed && message.generationId ? (
         <RetryBlock
           generationId={message.generationId}
           message={message.generationPublicError ?? "生成失败，请稍后重试。"}
+          onRetry={onRetry}
         />
       ) : null}
     </article>
   );
 }
 
+function PendingIndicator() {
+  return (
+    <div className="mt-3 flex items-center gap-2 text-sm text-accent">
+      <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-accent" />
+      <span>正在生成...</span>
+    </div>
+  );
+}
+
 function RetryBlock({
   generationId,
   message,
+  onRetry,
 }: {
   generationId: string;
   message: string;
+  onRetry: (generationId: string) => Promise<void>;
 }) {
-  const router = useRouter();
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
 
   const handleRetry = () => {
     setError("");
     startTransition(async () => {
-      const response = await fetch(
-        `/api/generations/${generationId}/retry`,
-        { method: "POST" },
-      );
-      const data = (await response.json().catch(() => ({}))) as {
-        error?: string;
-      };
-      if (!response.ok) {
-        setError(data.error || "重试失败。");
-        return;
+      try {
+        await onRetry(generationId);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "重试失败。");
       }
-      router.refresh();
     });
   };
 
@@ -230,59 +194,4 @@ function RetryBlock({
       {error ? <p className="text-xs text-red-600">{error}</p> : null}
     </div>
   );
-}
-
-function usePendingPolling(
-  pendingIds: string[],
-  onAnyCompleted: () => void,
-) {
-  const onCompletedRef = useRef(onAnyCompleted);
-
-  useEffect(() => {
-    onCompletedRef.current = onAnyCompleted;
-  }, [onAnyCompleted]);
-
-  const key = pendingIds.slice().sort().join("|");
-
-  useEffect(() => {
-    if (!key) {
-      return;
-    }
-
-    const ids = key.split("|");
-    let cancelled = false;
-    const resolved = new Set<string>();
-
-    const tick = async () => {
-      for (const id of ids) {
-        if (cancelled || resolved.has(id)) {
-          continue;
-        }
-        try {
-          const response = await fetch(`/api/generations/${id}`, {
-            cache: "no-store",
-          });
-          if (!response.ok) {
-            continue;
-          }
-          const data = (await response.json()) as { status?: string };
-          if (data.status && !PENDING_STATUSES.has(data.status)) {
-            resolved.add(id);
-            if (!cancelled) {
-              onCompletedRef.current();
-              return;
-            }
-          }
-        } catch {
-          // transient polling errors are ignored
-        }
-      }
-    };
-
-    const timer = window.setInterval(tick, 3000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [key]);
 }

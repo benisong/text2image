@@ -1,16 +1,24 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
-export function ChatComposer({
-  sessionId,
-  latestGenerationId,
-}: {
-  sessionId: string;
+type SubmitPayload = {
+  content: string;
+  mode: "new_image" | "modify_last";
+  parentGenerationId: string | null;
+  keepSeed: boolean;
+  outputMode: "image_only" | "image_with_commentary";
+};
+
+type ChatComposerProps = {
   latestGenerationId: string | null;
-}) {
-  const router = useRouter();
+  onSubmit: (payload: SubmitPayload) => Promise<void>;
+};
+
+export function ChatComposer({
+  latestGenerationId,
+  onSubmit,
+}: ChatComposerProps) {
   const [content, setContent] = useState("");
   const [keepSeed, setKeepSeed] = useState(true);
   const [continueLast, setContinueLast] = useState(Boolean(latestGenerationId));
@@ -23,37 +31,31 @@ export function ChatComposer({
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!content.trim()) {
+    const trimmed = content.trim();
+    if (!trimmed) {
       setError("请输入提示词。");
       return;
     }
 
     setError("");
+    const payload: SubmitPayload = {
+      content: trimmed,
+      mode: continueLast && latestGenerationId ? "modify_last" : "new_image",
+      parentGenerationId: continueLast ? latestGenerationId : null,
+      keepSeed,
+      outputMode,
+    };
+
+    // Clear immediately for snappier feel; restore on error.
+    setContent("");
 
     startTransition(async () => {
-      const response = await fetch(`/api/sessions/${sessionId}/messages`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          content,
-          mode: continueLast && latestGenerationId ? "modify_last" : "new_image",
-          parentGenerationId: continueLast ? latestGenerationId : null,
-          keepSeed,
-          outputMode,
-        }),
-      });
-
-      const data = (await response.json()) as { error?: string };
-
-      if (!response.ok) {
-        setError(data.error || "发送失败，请稍后重试。");
-        return;
+      try {
+        await onSubmit(payload);
+      } catch (err) {
+        setContent(trimmed);
+        setError(err instanceof Error ? err.message : "发送失败，请稍后重试。");
       }
-
-      setContent("");
-      router.refresh();
     });
   };
 
