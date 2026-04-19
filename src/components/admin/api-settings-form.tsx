@@ -17,6 +17,11 @@ type FormState = Omit<PublicApiSettings, "hasImageApiKey"> & {
   imageApiKey: string;
 };
 
+type ModelEntry = {
+  id: string;
+  ownedBy: string | null;
+};
+
 export function ApiSettingsForm({ initial }: { initial: PublicApiSettings }) {
   const router = useRouter();
   const [form, setForm] = useState<FormState>({
@@ -33,8 +38,47 @@ export function ApiSettingsForm({ initial }: { initial: PublicApiSettings }) {
   const [saved, setSaved] = useState("");
   const [isPending, startTransition] = useTransition();
 
+  const [models, setModels] = useState<ModelEntry[] | null>(null);
+  const [modelsError, setModelsError] = useState("");
+  const [fetchingModels, setFetchingModels] = useState(false);
+
   const patch = (key: keyof FormState, value: string | number) => {
     setForm((current) => ({ ...current, [key]: value }));
+  };
+
+  const fetchModels = async () => {
+    setModelsError("");
+    setFetchingModels(true);
+    try {
+      const response = await fetch("/api/admin/settings/api/models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          baseUrl: form.imageApiBaseUrl,
+          apiKey: form.imageApiKey,
+        }),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as {
+        models?: ModelEntry[];
+        error?: string;
+      };
+
+      if (!response.ok) {
+        setModelsError(data.error || "拉取模型列表失败。");
+        return;
+      }
+
+      const list = data.models ?? [];
+      setModels(list);
+      if (list.length === 0) {
+        setModelsError("API 返回空的模型列表。");
+      }
+    } catch {
+      setModelsError("拉取模型列表失败。");
+    } finally {
+      setFetchingModels(false);
+    }
   };
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -90,10 +134,40 @@ export function ApiSettingsForm({ initial }: { initial: PublicApiSettings }) {
           <span className="text-sm font-medium">模型名</span>
           <input
             className="field"
-            placeholder="dall-e-3"
+            list="image-api-models"
+            placeholder={
+              models && models.length > 0
+                ? "下拉选择或手动输入"
+                : "先拉取模型列表，或手动输入"
+            }
             value={form.imageApiModel}
             onChange={(event) => patch("imageApiModel", event.target.value)}
           />
+          {models && models.length > 0 ? (
+            <datalist id="image-api-models">
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.ownedBy ?? ""}
+                </option>
+              ))}
+            </datalist>
+          ) : null}
+          <div className="flex items-center gap-2 text-xs">
+            <button
+              type="button"
+              className="btn-secondary py-1 text-xs"
+              onClick={fetchModels}
+              disabled={fetchingModels}
+            >
+              {fetchingModels ? "拉取中..." : "拉取模型列表"}
+            </button>
+            {models && !modelsError ? (
+              <span className="text-muted">共 {models.length} 个模型</span>
+            ) : null}
+            {modelsError ? (
+              <span className="text-red-600">{modelsError}</span>
+            ) : null}
+          </div>
         </label>
         <label className="space-y-2">
           <span className="text-sm font-medium">默认尺寸</span>
@@ -155,7 +229,8 @@ export function ApiSettingsForm({ initial }: { initial: PublicApiSettings }) {
           onChange={(event) => patch("imageApiKey", event.target.value)}
         />
         <p className="mt-2 text-xs text-muted">
-          出于安全考虑，已保存的 API Key 不会回显到浏览器。
+          出于安全考虑，已保存的 API Key 不会回显到浏览器。拉取模型会用你当前输入的
+          Key；留空时会用已保存的 Key。
         </p>
       </div>
       {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
