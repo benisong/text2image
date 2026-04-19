@@ -14,12 +14,31 @@ type ImageApiSettings = {
   imageApiSize: string;
 };
 
+type GeneratedImage = {
+  bytes: Buffer;
+  mimeType: string;
+  effectivePrompt: string;
+};
+
+type ResolvedSettings = {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  size: string;
+};
+
 export class ImageGenerationError extends Error {
   readonly publicMessage: string;
+  readonly canFallbackToChat: boolean;
 
-  constructor(publicMessage: string, internalMessage?: string) {
+  constructor(
+    publicMessage: string,
+    internalMessage?: string,
+    options: { canFallbackToChat?: boolean } = {},
+  ) {
     super(internalMessage ?? publicMessage);
     this.publicMessage = publicMessage;
+    this.canFallbackToChat = options.canFallbackToChat ?? false;
     this.name = "ImageGenerationError";
   }
 }
@@ -42,7 +61,7 @@ function truncate(value: string, max = 800) {
   return value.length <= max ? value : `${value.slice(0, max)}...(truncated)`;
 }
 
-export async function generateImage(input: GenerateImageInput) {
+export async function generateImage(input: GenerateImageInput): Promise<GeneratedImage> {
   const { getApiSettings } = await import("@/server/services/settings");
   const settings = getApiSettings() as unknown as ImageApiSettings;
   const baseUrl = (settings.imageApiBaseUrl || "").trim().replace(/\/+$/, "");
@@ -58,16 +77,35 @@ export async function generateImage(input: GenerateImageInput) {
   }
 
   const size = aspectRatioToSize(input.aspectRatio, defaultSize);
+  const resolved: ResolvedSettings = { baseUrl, apiKey, model, size };
 
-  // 注意：不带 response_format，让服务端按模型自己的默认返回；
-  // gpt-image-1 等模型明确拒绝 response_format 参数，DALL-E 3 / SD 系默认返回 url。
-  const body: Record<string, unknown> = {
+  try {
+    return await generateViaImagesApi(resolved, input);
+  } catch (error) {
+    if (error instanceof ImageGenerationError && error.canFallbackToChat) {
+      console.warn(
+        `[image-generator] images endpoint 不支持 "${model}"，回退到 chat completions`,
+      );
+      return await generateViaChatApi(resolved, input);
+    }
+    throw error;
+  }
+}
+
+// -------- /v1/images/generations --------
+
+async function generateViaImagesApi(
+  settings: ResolvedSettings,
+  input: GenerateImageInput,
+): Promise<GeneratedImage> {
+  const { baseUrl, apiKey, model, size } = settings;
+
+  const body = {
     model,
     prompt: input.prompt,
     n: 1,
     size,
   };
-
   const requestUrl = `${baseUrl}/images/generations`;
 
   let response: Response;
@@ -124,6 +162,14 @@ export async function generateImage(input: GenerateImageInput) {
       /not supported model for image generation/i.test(upstreamMsg) ||
       /model.*not.*support.*image/i.test(upstreamMsg);
 
+    if (notImageCapable) {
+      throw new ImageGenerationError(
+        `所选模型 "${model}" 不支持 /v1/images/generations 协议`,
+        `image API ${response.status}: ${truncate(rawText)}`,
+        { canFallbackToChat: true },
+      );
+    }
+
     let publicMessage: string;
     if (response.status === 401 || response.status === 403) {
       publicMessage = "图像生成 API 凭据无效，请联系管理员。";
@@ -132,8 +178,6 @@ export async function generateImage(input: GenerateImageInput) {
         "API 端点返回 404：请检查 Base URL 是否正确（通常以 /v1 结尾）。";
     } else if (response.status === 429) {
       publicMessage = "图像生成 API 当前繁忙或额度不足，请稍后重试。";
-    } else if (notImageCapable) {
-      publicMessage = `所选模型 "${model}" 不支持图像生成，请在管理端换一个图像模型（如 dall-e-3、gpt-image-1、flux、sd-xl、mj 等）。`;
     } else if (response.status === 400 || response.status === 422) {
       publicMessage = upstreamMsg
         ? `生成请求被 API 拒绝：${upstreamMsg.slice(0, 120)}`
@@ -164,7 +208,6 @@ export async function generateImage(input: GenerateImageInput) {
     );
   }
 
-  // 某些代理即便 2xx 也把 {error: ...} 塞进 body
   const parsedObject =
     parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
   if (parsedObject.error) {
@@ -201,22 +244,7 @@ export async function generateImage(input: GenerateImageInput) {
   if (item.b64_json) {
     bytes = Buffer.from(item.b64_json, "base64");
   } else {
-    let imgRes: Response;
-    try {
-      imgRes = await fetch(item.url!);
-    } catch (error) {
-      throw new ImageGenerationError(
-        "下载生成的图片失败。",
-        error instanceof Error ? error.message : "download failed",
-      );
-    }
-    if (!imgRes.ok) {
-      throw new ImageGenerationError(
-        "下载生成的图片失败。",
-        `download failed: ${imgRes.status}`,
-      );
-    }
-    bytes = Buffer.from(await imgRes.arrayBuffer());
+    bytes = await downloadImage(item.url!);
   }
 
   return {
@@ -224,4 +252,231 @@ export async function generateImage(input: GenerateImageInput) {
     mimeType: "image/png",
     effectivePrompt: item.revised_prompt || input.prompt,
   };
+}
+
+// -------- /v1/chat/completions 回退 --------
+
+async function generateViaChatApi(
+  settings: ResolvedSettings,
+  input: GenerateImageInput,
+): Promise<GeneratedImage> {
+  const { baseUrl, apiKey, model } = settings;
+
+  const body = {
+    model,
+    messages: [
+      {
+        role: "user",
+        content: input.prompt,
+      },
+    ],
+  };
+  const requestUrl = `${baseUrl}/chat/completions`;
+
+  let response: Response;
+  try {
+    response = await fetch(requestUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    console.error("[image-generator] chat fetch failed", {
+      url: requestUrl,
+      model,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw new ImageGenerationError(
+      "无法连接图像生成 API，请稍后重试。",
+      error instanceof Error ? error.message : "fetch failed",
+    );
+  }
+
+  const rawText = await response.text();
+
+  if (!response.ok) {
+    console.error("[image-generator] chat upstream non-2xx", {
+      url: requestUrl,
+      model,
+      status: response.status,
+      body: truncate(rawText),
+    });
+    throw new ImageGenerationError(
+      response.status === 401 || response.status === 403
+        ? "图像生成 API 凭据无效，请联系管理员。"
+        : response.status === 429
+          ? "图像生成 API 当前繁忙或额度不足，请稍后重试。"
+          : `生成失败（${response.status}），请稍后重试。`,
+      `chat API ${response.status}: ${truncate(rawText)}`,
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    throw new ImageGenerationError(
+      "API 返回不是合法 JSON。",
+      `non-JSON body: ${truncate(rawText, 400)}`,
+    );
+  }
+
+  const parsedObject =
+    parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  if (parsedObject.error) {
+    throw new ImageGenerationError(
+      "生成失败，API 返回错误。",
+      `embedded error: ${truncate(JSON.stringify(parsedObject.error), 400)}`,
+    );
+  }
+
+  const refs = extractImageRefsFromChat(parsedObject);
+  if (refs.length === 0) {
+    console.error("[image-generator] chat response contained no image", {
+      url: requestUrl,
+      body: truncate(rawText),
+    });
+    throw new ImageGenerationError(
+      "模型没有返回图片，换个模型或换种描述再试。",
+      "chat response had no image parts",
+    );
+  }
+
+  let bytes: Buffer | null = null;
+  for (const ref of refs) {
+    try {
+      bytes = await resolveImageRef(ref);
+      if (bytes) break;
+    } catch (error) {
+      console.error("[image-generator] failed to load image ref", {
+        refPreview: ref.slice(0, 60),
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  if (!bytes) {
+    throw new ImageGenerationError(
+      "解析返回的图片数据失败。",
+      `could not decode any of ${refs.length} image refs`,
+    );
+  }
+
+  return {
+    bytes,
+    mimeType: "image/png",
+    effectivePrompt: input.prompt,
+  };
+}
+
+type UnknownRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is UnknownRecord {
+  return typeof value === "object" && value !== null;
+}
+
+function extractImageRefsFromChat(body: UnknownRecord): string[] {
+  const refs: string[] = [];
+
+  const choices = Array.isArray(body.choices) ? body.choices : [];
+  for (const choice of choices) {
+    if (!isRecord(choice)) continue;
+    const message = choice.message;
+    if (!isRecord(message)) continue;
+
+    // shape: message.images: [{ image_url: { url } }] or [{ url }]
+    const images = message.images;
+    if (Array.isArray(images)) {
+      for (const im of images) {
+        if (!isRecord(im)) continue;
+        const nested = isRecord(im.image_url) ? im.image_url.url : undefined;
+        const candidate =
+          typeof nested === "string"
+            ? nested
+            : typeof im.url === "string"
+              ? im.url
+              : typeof im.b64_json === "string"
+                ? `data:image/png;base64,${im.b64_json}`
+                : null;
+        if (candidate) refs.push(candidate);
+      }
+    }
+
+    // shape: message.content is array of parts
+    const content = message.content;
+    if (Array.isArray(content)) {
+      for (const part of content) {
+        if (!isRecord(part)) continue;
+        if (part.type === "image_url") {
+          const url =
+            isRecord(part.image_url) && typeof part.image_url.url === "string"
+              ? part.image_url.url
+              : typeof part.image_url === "string"
+                ? part.image_url
+                : null;
+          if (url) refs.push(url);
+        } else if (part.type === "image" && typeof part.source === "object") {
+          const source = part.source as UnknownRecord;
+          if (typeof source.data === "string") {
+            const media = typeof source.media_type === "string" ? source.media_type : "image/png";
+            refs.push(`data:${media};base64,${source.data}`);
+          }
+        }
+      }
+    }
+
+    // shape: content is string with markdown / data URI
+    if (typeof content === "string") {
+      const markdown = [...content.matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g)];
+      for (const m of markdown) refs.push(m[1]);
+
+      const dataUris = [
+        ...content.matchAll(/data:image\/[a-zA-Z+.-]+;base64,[A-Za-z0-9+/=]+/g),
+      ];
+      for (const m of dataUris) {
+        if (!refs.includes(m[0])) refs.push(m[0]);
+      }
+    }
+  }
+
+  return refs;
+}
+
+async function resolveImageRef(ref: string): Promise<Buffer | null> {
+  if (ref.startsWith("data:")) {
+    const comma = ref.indexOf(",");
+    if (comma === -1) return null;
+    const meta = ref.slice(5, comma);
+    const payload = ref.slice(comma + 1);
+    if (meta.includes("base64")) {
+      return Buffer.from(payload, "base64");
+    }
+    return Buffer.from(decodeURIComponent(payload), "utf8");
+  }
+  if (/^https?:\/\//i.test(ref)) {
+    return await downloadImage(ref);
+  }
+  return null;
+}
+
+async function downloadImage(url: string): Promise<Buffer> {
+  let imgRes: Response;
+  try {
+    imgRes = await fetch(url);
+  } catch (error) {
+    throw new ImageGenerationError(
+      "下载生成的图片失败。",
+      error instanceof Error ? error.message : "download failed",
+    );
+  }
+  if (!imgRes.ok) {
+    throw new ImageGenerationError(
+      "下载生成的图片失败。",
+      `download failed: ${imgRes.status}`,
+    );
+  }
+  return Buffer.from(await imgRes.arrayBuffer());
 }
