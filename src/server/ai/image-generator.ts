@@ -104,16 +104,46 @@ export async function generateImage(input: GenerateImageInput) {
       status: response.status,
       body: truncate(rawText),
     });
-    const publicMessage =
-      response.status === 401 || response.status === 403
-        ? "图像生成 API 凭据无效，请联系管理员。"
-        : response.status === 429
-          ? "图像生成 API 当前繁忙或额度不足，请稍后重试。"
-          : response.status === 400 || response.status === 422
-            ? "生成请求被 API 拒绝，请检查模型名或提示词。"
-            : response.status >= 500
-              ? "图像生成 API 暂时不可用，请稍后重试。"
-              : "生成失败，请检查提示词后重试。";
+
+    let upstreamMsg = "";
+    let upstreamCode = "";
+    try {
+      const maybe = JSON.parse(rawText) as {
+        error?: { message?: unknown; code?: unknown };
+      };
+      if (maybe && typeof maybe.error === "object" && maybe.error) {
+        if (typeof maybe.error.message === "string") upstreamMsg = maybe.error.message;
+        if (typeof maybe.error.code === "string") upstreamCode = maybe.error.code;
+      }
+    } catch {
+      // ignore non-JSON body
+    }
+
+    const notImageCapable =
+      upstreamCode === "convert_request_failed" ||
+      /not supported model for image generation/i.test(upstreamMsg) ||
+      /model.*not.*support.*image/i.test(upstreamMsg);
+
+    let publicMessage: string;
+    if (response.status === 401 || response.status === 403) {
+      publicMessage = "图像生成 API 凭据无效，请联系管理员。";
+    } else if (response.status === 404) {
+      publicMessage =
+        "API 端点返回 404：请检查 Base URL 是否正确（通常以 /v1 结尾）。";
+    } else if (response.status === 429) {
+      publicMessage = "图像生成 API 当前繁忙或额度不足，请稍后重试。";
+    } else if (notImageCapable) {
+      publicMessage = `所选模型 "${model}" 不支持图像生成，请在管理端换一个图像模型（如 dall-e-3、gpt-image-1、flux、sd-xl、mj 等）。`;
+    } else if (response.status === 400 || response.status === 422) {
+      publicMessage = upstreamMsg
+        ? `生成请求被 API 拒绝：${upstreamMsg.slice(0, 120)}`
+        : "生成请求被 API 拒绝，请检查模型名或提示词。";
+    } else if (response.status >= 500) {
+      publicMessage = "图像生成 API 暂时不可用，请稍后重试。";
+    } else {
+      publicMessage = "生成失败，请检查提示词后重试。";
+    }
+
     throw new ImageGenerationError(
       publicMessage,
       `image API ${response.status}: ${truncate(rawText)}`,
