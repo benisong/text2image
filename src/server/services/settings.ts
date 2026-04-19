@@ -1,6 +1,12 @@
 import "server-only";
 
-import { DEFAULT_IMAGE_ROOT, DEFAULT_MAX_CONCURRENCY } from "@/lib/constants";
+import {
+  DEFAULT_IMAGE_API_BASE_URL,
+  DEFAULT_IMAGE_API_MODEL,
+  DEFAULT_IMAGE_API_SIZE,
+  DEFAULT_IMAGE_ROOT,
+  DEFAULT_MAX_CONCURRENCY,
+} from "@/lib/constants";
 import { getDb } from "@/server/db";
 
 export function getSetting(key: string) {
@@ -32,10 +38,10 @@ export function getNumberSetting(key: string, fallback: number) {
 
 export function getApiSettings() {
   return {
-    vertexProjectId: getTextSetting("vertex.project_id"),
-    vertexLocation: getTextSetting("vertex.location"),
-    imagenModel: getTextSetting("vertex.imagen_model"),
-    serviceAccountJson: getTextSetting("vertex.service_account_json"),
+    imageApiBaseUrl: getTextSetting("image_api.base_url", DEFAULT_IMAGE_API_BASE_URL),
+    imageApiKey: getTextSetting("image_api.key"),
+    imageApiModel: getTextSetting("image_api.model", DEFAULT_IMAGE_API_MODEL),
+    imageApiSize: getTextSetting("image_api.size", DEFAULT_IMAGE_API_SIZE),
     promptOptimizerModel: getTextSetting("prompt_optimizer.model", "template"),
     maxConcurrency: getNumberSetting(
       "generation.max_concurrency",
@@ -46,10 +52,10 @@ export function getApiSettings() {
 }
 
 export type PublicApiSettings = {
-  vertexProjectId: string;
-  vertexLocation: string;
-  imagenModel: string;
-  hasServiceAccountJson: boolean;
+  imageApiBaseUrl: string;
+  imageApiModel: string;
+  imageApiSize: string;
+  hasImageApiKey: boolean;
   promptOptimizerModel: string;
   maxConcurrency: number;
   imageRootDir: string;
@@ -58,10 +64,10 @@ export type PublicApiSettings = {
 export function getPublicApiSettings(): PublicApiSettings {
   const settings = getApiSettings();
   return {
-    vertexProjectId: settings.vertexProjectId,
-    vertexLocation: settings.vertexLocation,
-    imagenModel: settings.imagenModel,
-    hasServiceAccountJson: settings.serviceAccountJson.trim().length > 0,
+    imageApiBaseUrl: settings.imageApiBaseUrl,
+    imageApiModel: settings.imageApiModel,
+    imageApiSize: settings.imageApiSize,
+    hasImageApiKey: settings.imageApiKey.trim().length > 0,
     promptOptimizerModel: settings.promptOptimizerModel,
     maxConcurrency: settings.maxConcurrency,
     imageRootDir: settings.imageRootDir,
@@ -69,10 +75,10 @@ export function getPublicApiSettings(): PublicApiSettings {
 }
 
 export function updateApiSettings(input: {
-  vertexProjectId: string;
-  vertexLocation: string;
-  imagenModel: string;
-  serviceAccountJson?: string;
+  imageApiBaseUrl: string;
+  imageApiModel: string;
+  imageApiSize: string;
+  imageApiKey?: string;
   promptOptimizerModel: string;
   maxConcurrency: number;
   imageRootDir: string;
@@ -91,17 +97,17 @@ export function updateApiSettings(input: {
   `);
 
   const rows: Array<readonly [string, string, string, number]> = [
-    ["vertex.project_id", "text", input.vertexProjectId, 0],
-    ["vertex.location", "text", input.vertexLocation, 0],
-    ["vertex.imagen_model", "text", input.imagenModel, 0],
+    ["image_api.base_url", "text", input.imageApiBaseUrl, 0],
+    ["image_api.model", "text", input.imageApiModel, 0],
+    ["image_api.size", "text", input.imageApiSize, 0],
     ["prompt_optimizer.model", "text", input.promptOptimizerModel, 0],
     ["generation.max_concurrency", "number", String(input.maxConcurrency), 0],
     ["storage.image_root_dir", "text", input.imageRootDir, 0],
   ];
 
-  const trimmedServiceAccount = (input.serviceAccountJson ?? "").trim();
-  if (trimmedServiceAccount.length > 0) {
-    rows.push(["vertex.service_account_json", "text", trimmedServiceAccount, 1]);
+  const trimmedKey = (input.imageApiKey ?? "").trim();
+  if (trimmedKey.length > 0) {
+    rows.push(["image_api.key", "text", trimmedKey, 1]);
   }
 
   const tx = db.transaction(() => {

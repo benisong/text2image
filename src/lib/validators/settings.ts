@@ -17,10 +17,17 @@ function isSandboxedRelativePath(value: string) {
 }
 
 export const apiSettingsSchema = z.object({
-  vertexProjectId: z.string().trim().min(1),
-  vertexLocation: z.string().trim().min(1),
-  imagenModel: z.string().trim().min(1),
-  serviceAccountJson: z.string().trim().optional().default(""),
+  imageApiBaseUrl: z
+    .string()
+    .trim()
+    .url({ message: "请填写完整的 API Base URL，例如 https://api.openai.com/v1" }),
+  imageApiKey: z.string().trim().optional().default(""),
+  imageApiModel: z.string().trim().min(1),
+  imageApiSize: z
+    .string()
+    .trim()
+    .regex(/^\d{2,5}x\d{2,5}$/i, { message: "尺寸格式应为 WIDTHxHEIGHT，例如 1024x1024" })
+    .default("1024x1024"),
   promptOptimizerModel: z.string().trim().optional().default(""),
   maxConcurrency: z.coerce.number().int().min(1).max(4),
   imageRootDir: z

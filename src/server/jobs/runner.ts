@@ -3,11 +3,11 @@ import "server-only";
 import { JOB_STATUS, OUTPUT_MODE } from "@/lib/constants";
 import { nowIso } from "@/lib/utils";
 import { buildCommentary } from "@/server/ai/commentary";
-import { buildOptimizedPrompt } from "@/server/ai/prompt-optimizer";
 import {
-  generateImageWithVertex,
-  VertexImagenError,
-} from "@/server/ai/vertex-imagen";
+  generateImage,
+  ImageGenerationError,
+} from "@/server/ai/image-generator";
+import { buildOptimizedPrompt } from "@/server/ai/prompt-optimizer";
 import { getDb } from "@/server/db";
 import {
   getGenerationById,
@@ -210,7 +210,7 @@ export async function runSingleJob(jobId: string) {
       progress: 50,
     });
 
-    const result = await generateImageWithVertex({
+    const result = await generateImage({
       prompt: optimized.prompt,
       negativePrompt: optimized.negativePrompt,
       aspectRatio: optimized.aspectRatio,
@@ -258,7 +258,7 @@ export async function runSingleJob(jobId: string) {
     const internalMessage =
       error instanceof Error ? error.message : "Unknown job error";
     const publicMessage =
-      error instanceof VertexImagenError
+      error instanceof ImageGenerationError
         ? error.publicMessage
         : "生成失败，请稍后重试。";
 

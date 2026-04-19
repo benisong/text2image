@@ -3,14 +3,19 @@ set -euo pipefail
 
 # text2image 一键部署脚本
 # - 默认端口 16000（宿主机）→ 容器内 3000
-# - 首次运行自动生成 .env 和随机管理员密码
-# - 再次运行等价于重新 build + 重启
+# - 首次运行自动生成 .env 与随机管理员密码
+# - 再次运行等价于重 build + 重启，沿用原有 .env / data
+# - 启用 Docker BuildKit + 缓存挂载，重复构建可省去 npm 全量下载
 
 cd "$(dirname "$0")"
 
 log() { printf "\033[1;32m[deploy]\033[0m %s\n" "$*"; }
 warn() { printf "\033[1;33m[deploy]\033[0m %s\n" "$*" >&2; }
 die() { printf "\033[1;31m[deploy]\033[0m %s\n" "$*" >&2; exit 1; }
+
+# 启用 BuildKit（Dockerfile 用了 cache mount）
+export DOCKER_BUILDKIT=1
+export COMPOSE_DOCKER_CLI_BUILD=1
 
 # ---------- 依赖检查 ----------
 command -v docker >/dev/null 2>&1 || die "未检测到 docker，请先安装 Docker Engine。"
@@ -39,21 +44,21 @@ if [ ! -f "$ENV_FILE" ]; then
   log "未找到 .env，生成默认配置"
   ADMIN_PASSWORD="$(rand_password)"
   cat > "$ENV_FILE" <<EOF
-# 宿主机端口，nginx/Cloudflare 请指向这个端口
+# 宿主机端口；nginx / Cloudflare 反代请指向这个端口
 APP_PORT=${APP_PORT}
 
-# 首次管理员凭据（可在登录后在管理端改密）
+# 首次管理员凭据；登录后会强制改密
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=${ADMIN_PASSWORD}
 
-# HTTPS 反代后设为 true；HTTP 直连保持 false，否则 cookie 会丢
+# HTTPS 反代后设为 true；HTTP 直连保持 false，否则浏览器会丢弃 cookie
 SESSION_COOKIE_SECURE=false
 
-# Vertex AI 可以先留空，启动后在管理端"API 配置"里填
-VERTEX_PROJECT_ID=
-VERTEX_LOCATION=us-central1
-VERTEX_IMAGEN_MODEL=imagen-4.0-generate-001
-VERTEX_SERVICE_ACCOUNT_JSON=
+# OpenAI 兼容图像生成 API 配置；可以先留空，启动后到管理端"API 配置"里填
+IMAGE_API_BASE_URL=https://api.openai.com/v1
+IMAGE_API_KEY=
+IMAGE_API_MODEL=dall-e-3
+IMAGE_API_SIZE=1024x1024
 
 PROMPT_OPTIMIZER_MODEL=template
 GENERATION_MAX_CONCURRENCY=2
@@ -76,10 +81,9 @@ fi
 mkdir -p data/images
 
 # ---------- 启动 ----------
-log "构建并启动容器"
+log "构建并启动容器（首次较慢，后续利用 BuildKit 缓存会显著加速）"
 "${COMPOSE[@]}" up -d --build
 
-# ---------- 健康等待 ----------
 FINAL_PORT="$(grep -E '^APP_PORT=' "$ENV_FILE" | tail -n1 | cut -d= -f2)"
 FINAL_PORT="${FINAL_PORT:-$APP_PORT}"
 

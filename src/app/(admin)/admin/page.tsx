@@ -4,7 +4,7 @@ import { LogoutButton } from "@/components/shared/logout-button";
 import { formatDateTime } from "@/lib/utils";
 import { requireAdmin } from "@/server/auth/guards";
 import { listSessionsForAdmin, listPendingJobs } from "@/server/services/sessions";
-import { getApiSettings } from "@/server/services/settings";
+import { getPublicApiSettings } from "@/server/services/settings";
 import { listUsers } from "@/server/services/users";
 
 export default async function AdminDashboardPage() {
@@ -12,7 +12,7 @@ export default async function AdminDashboardPage() {
   const users = listUsers();
   const sessions = listSessionsForAdmin().slice(0, 8);
   const jobs = listPendingJobs();
-  const settings = getApiSettings();
+  const settings = getPublicApiSettings();
 
   return (
     <main className="admin-shell min-h-screen px-4 py-6 md:px-8">
@@ -55,7 +55,7 @@ export default async function AdminDashboardPage() {
           </div>
           <div className="card p-5">
             <p className="text-sm text-muted">默认模型</p>
-            <p className="mt-3 text-lg font-semibold">{settings.imagenModel || "未配置"}</p>
+            <p className="mt-3 text-lg font-semibold">{settings.imageApiModel || "未配置"}</p>
           </div>
           <div className="card p-5">
             <p className="text-sm text-muted">图片目录</p>

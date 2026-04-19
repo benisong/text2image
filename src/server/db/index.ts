@@ -10,10 +10,11 @@ import {
   APP_NAME,
   DEFAULT_ADMIN_PASSWORD,
   DEFAULT_ADMIN_USERNAME,
+  DEFAULT_IMAGE_API_BASE_URL,
+  DEFAULT_IMAGE_API_MODEL,
+  DEFAULT_IMAGE_API_SIZE,
   DEFAULT_IMAGE_ROOT,
   DEFAULT_MAX_CONCURRENCY,
-  DEFAULT_VERTEX_LOCATION,
-  DEFAULT_VERTEX_MODEL,
   ROLE,
 } from "@/lib/constants";
 import { nowIso } from "@/lib/utils";
@@ -264,32 +265,37 @@ function bootstrapData(db: Database) {
     });
   }
 
+  // Drop legacy Vertex AI settings if present (we now use OpenAI-compatible API).
+  db.prepare(
+    `DELETE FROM system_settings WHERE setting_key LIKE 'vertex.%'`,
+  ).run();
+
   upsertSetting(
     db,
-    "vertex.project_id",
+    "image_api.base_url",
     "text",
-    process.env.VERTEX_PROJECT_ID ?? "",
+    process.env.IMAGE_API_BASE_URL ?? DEFAULT_IMAGE_API_BASE_URL,
     null,
   );
   upsertSetting(
     db,
-    "vertex.location",
+    "image_api.model",
     "text",
-    process.env.VERTEX_LOCATION ?? DEFAULT_VERTEX_LOCATION,
+    process.env.IMAGE_API_MODEL ?? DEFAULT_IMAGE_API_MODEL,
     null,
   );
   upsertSetting(
     db,
-    "vertex.imagen_model",
+    "image_api.size",
     "text",
-    process.env.VERTEX_IMAGEN_MODEL ?? DEFAULT_VERTEX_MODEL,
+    process.env.IMAGE_API_SIZE ?? DEFAULT_IMAGE_API_SIZE,
     null,
   );
   upsertSetting(
     db,
-    "vertex.service_account_json",
+    "image_api.key",
     "text",
-    process.env.VERTEX_SERVICE_ACCOUNT_JSON ?? "",
+    process.env.IMAGE_API_KEY ?? "",
     null,
     true,
   );

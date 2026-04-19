@@ -1,6 +1,6 @@
 import "server-only";
 
-import { DEFAULT_VERTEX_MODEL, GENERATION_STATUS, JOB_STATUS } from "@/lib/constants";
+import { DEFAULT_IMAGE_API_MODEL, GENERATION_STATUS, JOB_STATUS } from "@/lib/constants";
 import { nowIso, parseJson, titleFromPrompt } from "@/lib/utils";
 import { getDb, transaction } from "@/server/db";
 import { deleteSessionImageDirectory } from "@/server/storage/images";
@@ -314,13 +314,13 @@ export function createMessageAndGeneration(input: {
         explanation_text, explanation_status, storage_bucket, storage_path, public_url,
         width, height, file_size_bytes, error_code, error_message, created_at, updated_at, completed_at
       )
-      VALUES (?, ?, ?, ?, 'vertex_ai', ?, ?, ?, ?, ?, NULL, ?, '1:1', NULL, 'image/png', ?, NULL, ?, NULL, 'none', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, NULL)
+      VALUES (?, ?, ?, ?, 'openai_compatible', ?, ?, ?, ?, ?, NULL, ?, '1:1', NULL, 'image/png', ?, NULL, ?, NULL, 'none', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, NULL)
     `).run(
       generationId,
       input.sessionId,
       input.parentGenerationId || null,
       messageId,
-      DEFAULT_VERTEX_MODEL,
+      DEFAULT_IMAGE_API_MODEL,
       input.content,
       input.content,
       null,

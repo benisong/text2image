@@ -35,7 +35,9 @@ export const PUT = withAdmin(async (ctx) => {
     actorUsername: ctx.user.username,
     targetType: "settings",
     metadata: {
-      updatedServiceAccount: (parsed.data.serviceAccountJson ?? "").trim().length > 0,
+      updatedApiKey: (parsed.data.imageApiKey ?? "").trim().length > 0,
+      baseUrl: parsed.data.imageApiBaseUrl,
+      model: parsed.data.imageApiModel,
     },
     ip: ctx.ip,
   });
