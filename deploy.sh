@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# text2image 一键部署脚本
-# - 默认端口 16000（宿主机）→ 容器内 3000
+# text2image 一键部署脚本（pm2 版）
+# - 默认端口 16000；nginx / Cloudflare 反代指向该端口
 # - 首次运行自动生成 .env 与随机管理员密码
-# - 再次运行等价于重 build + 重启，沿用原有 .env / data
-# - 启用 Docker BuildKit + 缓存挂载，重复构建可省去 npm 全量下载
+# - 后续运行：拉新代码后再次执行即可，会增量装依赖、重新 build、热重启 pm2
 
 cd "$(dirname "$0")"
 
@@ -13,30 +12,26 @@ log() { printf "\033[1;32m[deploy]\033[0m %s\n" "$*"; }
 warn() { printf "\033[1;33m[deploy]\033[0m %s\n" "$*" >&2; }
 die() { printf "\033[1;31m[deploy]\033[0m %s\n" "$*" >&2; exit 1; }
 
-# 优先用 BuildKit；如果守护进程开了 BuildKit 但 buildx 缺失，就回退到 legacy builder
-if docker buildx version >/dev/null 2>&1; then
-  export DOCKER_BUILDKIT=1
-  export COMPOSE_DOCKER_CLI_BUILD=1
-else
-  export DOCKER_BUILDKIT=0
-  export COMPOSE_DOCKER_CLI_BUILD=0
-fi
-
 # ---------- 依赖检查 ----------
-command -v docker >/dev/null 2>&1 || die "未检测到 docker，请先安装 Docker Engine。"
+command -v node >/dev/null 2>&1 || die "未检测到 node，请先安装 Node.js >= 20。"
+command -v npm  >/dev/null 2>&1 || die "未检测到 npm。"
 
-if docker compose version >/dev/null 2>&1; then
-  COMPOSE=(docker compose)
-elif command -v docker-compose >/dev/null 2>&1; then
-  COMPOSE=(docker-compose)
-else
-  die "未检测到 docker compose 插件或 docker-compose 命令。"
+NODE_MAJOR="$(node -v 2>/dev/null | sed 's/v\([0-9]*\).*/\1/' || echo 0)"
+if [ "${NODE_MAJOR:-0}" -lt 20 ]; then
+  die "当前 Node 版本过低（v${NODE_MAJOR}），请升级到 Node.js >= 20。"
 fi
 
-APP_PORT="${APP_PORT:-16000}"
-ENV_FILE=".env"
+if ! command -v pm2 >/dev/null 2>&1; then
+  log "未检测到 pm2，尝试 npm install -g pm2"
+  if ! npm install -g pm2 >/dev/null 2>&1; then
+    die "自动安装 pm2 失败，请手动执行: sudo npm install -g pm2"
+  fi
+fi
 
 # ---------- 生成 .env ----------
+APP_PORT_DEFAULT="${APP_PORT:-16000}"
+ENV_FILE=".env"
+
 rand_password() {
   if command -v openssl >/dev/null 2>&1; then
     openssl rand -base64 18 | tr -d '=/+' | cut -c1-16
@@ -50,7 +45,7 @@ if [ ! -f "$ENV_FILE" ]; then
   ADMIN_PASSWORD="$(rand_password)"
   cat > "$ENV_FILE" <<EOF
 # 宿主机端口；nginx / Cloudflare 反代请指向这个端口
-APP_PORT=${APP_PORT}
+APP_PORT=${APP_PORT_DEFAULT}
 
 # 首次管理员凭据；登录后会强制改密
 ADMIN_USERNAME=admin
@@ -59,7 +54,7 @@ ADMIN_PASSWORD=${ADMIN_PASSWORD}
 # HTTPS 反代后设为 true；HTTP 直连保持 false，否则浏览器会丢弃 cookie
 SESSION_COOKIE_SECURE=false
 
-# OpenAI 兼容图像生成 API 配置；可以先留空，启动后到管理端"API 配置"里填
+# OpenAI 兼容图像生成 API；可以先留空，启动后到管理端"API 配置"里填
 IMAGE_API_BASE_URL=https://api.openai.com/v1
 IMAGE_API_KEY=
 IMAGE_API_MODEL=dall-e-3
@@ -77,36 +72,63 @@ EOF
 else
   log ".env 已存在，沿用原有配置"
   if ! grep -q '^APP_PORT=' "$ENV_FILE"; then
-    echo "APP_PORT=${APP_PORT}" >> "$ENV_FILE"
-    log "补齐 APP_PORT=${APP_PORT}"
+    echo "APP_PORT=${APP_PORT_DEFAULT}" >> "$ENV_FILE"
+    log "补齐 APP_PORT=${APP_PORT_DEFAULT}"
   fi
 fi
+
+# ---------- 加载 .env 到当前 shell ----------
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+APP_PORT="${APP_PORT:-${APP_PORT_DEFAULT}}"
+export APP_PORT
 
 # ---------- 目录 ----------
 mkdir -p data/images
 
-# ---------- 启动 ----------
-log "构建并启动容器（首次较慢，后续利用 BuildKit 缓存会显著加速）"
-"${COMPOSE[@]}" up -d --build
+# ---------- 依赖：仅在 package-lock 变化时重装 ----------
+STAMP="node_modules/.deploy-stamp"
+if [ ! -d node_modules ] || [ ! -f "$STAMP" ] || [ "package-lock.json" -nt "$STAMP" ]; then
+  log "安装依赖（npm ci）..."
+  npm ci --no-audit --no-fund
+  mkdir -p node_modules
+  touch "$STAMP"
+else
+  log "依赖未变更，跳过 npm ci"
+fi
 
-FINAL_PORT="$(grep -E '^APP_PORT=' "$ENV_FILE" | tail -n1 | cut -d= -f2)"
-FINAL_PORT="${FINAL_PORT:-$APP_PORT}"
+# ---------- 构建 ----------
+log "构建（npm run build）..."
+npm run build
 
-log "容器状态:"
-"${COMPOSE[@]}" ps
+# ---------- pm2 启动 / 热重启 ----------
+if pm2 describe text2image >/dev/null 2>&1; then
+  log "热重启 pm2 进程"
+  pm2 reload ecosystem.config.cjs --update-env
+else
+  log "首次启动 pm2 进程"
+  pm2 start ecosystem.config.cjs
+fi
+
+pm2 save >/dev/null 2>&1 || true
 
 cat <<EOF
 
 ============================================================
   启动完成
-  用户端:  http://<your-host>:${FINAL_PORT}/login
-  管理端:  http://<your-host>:${FINAL_PORT}/admin/login
+  用户端:  http://<your-host>:${APP_PORT}/login
+  管理端:  http://<your-host>:${APP_PORT}/admin/login
 ============================================================
 
 常用命令：
-  查看日志:   ${COMPOSE[*]} logs -f app
-  停止:       ${COMPOSE[*]} down
-  更新重启:   ./deploy.sh
-  删除数据:   ${COMPOSE[*]} down && rm -rf data
+  查看日志:   pm2 logs text2image
+  查看状态:   pm2 status
+  停止:       pm2 stop text2image
+  开机自启:   sudo env PATH=\$PATH:\$(dirname "\$(command -v node)") \\
+             \$(command -v pm2) startup systemd -u "\$USER" --hp "\$HOME"
+             # 上面命令打印一行 sudo 命令，再执行一次即可
+  完全卸载:   pm2 delete text2image && pm2 save
 
 EOF
