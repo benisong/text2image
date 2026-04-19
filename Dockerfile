@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 FROM node:24-bookworm-slim AS deps
 
 WORKDIR /app
@@ -9,8 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci --no-audit --no-fund --prefer-offline
+RUN npm ci --no-audit --no-fund --prefer-offline
 
 FROM node:24-bookworm-slim AS builder
 
@@ -21,8 +19,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-RUN --mount=type=cache,target=/app/.next/cache \
-    npm run build
+RUN npm run build
 
 FROM node:24-bookworm-slim AS runner
 

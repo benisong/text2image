@@ -13,9 +13,14 @@ log() { printf "\033[1;32m[deploy]\033[0m %s\n" "$*"; }
 warn() { printf "\033[1;33m[deploy]\033[0m %s\n" "$*" >&2; }
 die() { printf "\033[1;31m[deploy]\033[0m %s\n" "$*" >&2; exit 1; }
 
-# 启用 BuildKit（Dockerfile 用了 cache mount）
-export DOCKER_BUILDKIT=1
-export COMPOSE_DOCKER_CLI_BUILD=1
+# 优先用 BuildKit；如果守护进程开了 BuildKit 但 buildx 缺失，就回退到 legacy builder
+if docker buildx version >/dev/null 2>&1; then
+  export DOCKER_BUILDKIT=1
+  export COMPOSE_DOCKER_CLI_BUILD=1
+else
+  export DOCKER_BUILDKIT=0
+  export COMPOSE_DOCKER_CLI_BUILD=0
+fi
 
 # ---------- 依赖检查 ----------
 command -v docker >/dev/null 2>&1 || die "未检测到 docker，请先安装 Docker Engine。"
