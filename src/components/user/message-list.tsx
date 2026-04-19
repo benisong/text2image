@@ -126,17 +126,23 @@ function MessageItem({
       ) : null}
       {/* 图片只在系统气泡里展示，避免和用户气泡里的同张图重复 */}
       {isAssistant && message.publicUrl ? (
-        <div className="mt-4 overflow-hidden rounded-3xl border border-line bg-white">
+        <a
+          href={message.publicUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-4 block overflow-hidden rounded-3xl border border-line bg-white"
+          title="点击查看原图"
+        >
           <Image
             alt="生成图片"
-            className="h-auto w-full object-cover"
+            className="h-auto w-full"
             src={message.publicUrl}
-            width={1200}
-            height={1200}
+            width={2048}
+            height={2048}
             unoptimized
             loading="lazy"
           />
-        </div>
+        </a>
       ) : null}
       {!isAssistant && isPending ? <PendingIndicator /> : null}
       {!isAssistant && isFailed && message.generationId ? (

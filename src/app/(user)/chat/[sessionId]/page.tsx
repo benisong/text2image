@@ -31,7 +31,7 @@ export default async function SessionPage({
 
   return (
     <main className="user-shell flex h-screen flex-col overflow-hidden px-4 py-4 md:px-8">
-      <div className="mx-auto flex w-full max-w-7xl shrink-0 items-start justify-between gap-4">
+      <div className="mx-auto flex w-full max-w-[110rem] shrink-0 items-start justify-between gap-4">
         <div>
           <p className="text-sm uppercase tracking-[0.3em] text-muted">User Console</p>
           <h1 className="mt-1 text-2xl font-semibold">{currentSession.title}</h1>
@@ -39,7 +39,7 @@ export default async function SessionPage({
         </div>
         <LogoutButton redirectTo="/login" />
       </div>
-      <div className="mx-auto mt-4 grid min-h-0 w-full max-w-7xl flex-1 gap-6 lg:grid-cols-[300px_1fr]">
+      <div className="mx-auto mt-4 grid min-h-0 w-full max-w-[110rem] flex-1 gap-6 lg:grid-cols-[280px_1fr]">
         <aside className="flex min-h-0 flex-col gap-4 overflow-y-auto pr-1">
           <div className="card p-4">
             <CreateSessionButton />
