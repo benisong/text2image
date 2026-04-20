@@ -60,14 +60,14 @@ export function ChatComposer({
   };
 
   return (
-    <form className="card p-4" onSubmit={handleSubmit}>
+    <form className="card p-3 md:p-4" onSubmit={handleSubmit}>
       <textarea
-        className="field min-h-28 resize-y"
+        className="field min-h-20 resize-y md:min-h-28"
         value={content}
         onChange={(event) => setContent(event.target.value)}
         placeholder="输入提示词，或说明你想如何修改上一张图。"
       />
-      <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-muted">
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-muted md:mt-4 md:text-sm">
         <label className="inline-flex items-center gap-2">
           <input
             checked={continueLast}
@@ -83,24 +83,24 @@ export function ChatComposer({
             onChange={(event) => setKeepSeed(event.target.checked)}
             type="checkbox"
           />
-          保留随机种子
+          保留种子
         </label>
         <label className="inline-flex items-center gap-2">
-          <span>输出模式</span>
+          <span>输出</span>
           <select
-            className="field min-w-44 py-2"
+            className="field min-w-32 py-1.5 text-xs md:min-w-44 md:py-2 md:text-sm"
             value={outputMode}
             onChange={(event) =>
               setOutputMode(event.target.value as "image_only" | "image_with_commentary")
             }
           >
             <option value="image_only">仅生图</option>
-            <option value="image_with_commentary">生图附带解说</option>
+            <option value="image_with_commentary">生图+解说</option>
           </select>
         </label>
       </div>
-      {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
-      <div className="mt-4 flex items-center justify-end">
+      {error ? <p className="mt-2 text-sm text-red-600">{error}</p> : null}
+      <div className="mt-3 flex items-center justify-end md:mt-4">
         <button className="btn-primary" type="submit" disabled={isPending}>
           {isPending ? "提交中..." : "开始生成"}
         </button>

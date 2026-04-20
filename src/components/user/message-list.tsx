@@ -105,10 +105,10 @@ function MessageItem({
 
   return (
     <article
-      className={`rounded-3xl border p-4 ${
+      className={`rounded-3xl border p-3 md:p-4 ${
         isAssistant
           ? "border-line bg-[#fffaf3]"
-          : "ml-auto max-w-3xl border-accent/25 bg-white"
+          : "ml-auto w-full max-w-3xl border-accent/25 bg-white md:w-auto"
       }`}
     >
       <div className="flex items-center justify-between gap-4">
