@@ -2,10 +2,13 @@
 set -euo pipefail
 
 # text2image 一键部署脚本（pm2 版）
-# - 默认端口 16000；nginx / Cloudflare 反代指向该端口
-# - 首次运行自动生成 .env 与随机管理员密码
-# - 缺少 Node 或版本 < 20 时自动安装 Node 24（apt/dnf/yum/apk）
-# - 后续运行：拉新代码后再次执行即可，会增量装依赖、重新 build、热重启 pm2
+# 自动处理的依赖：
+#   node (>= 20，缺失/过旧自动装 Node 24)
+#   npm   (随 nodejs 一起)
+#   curl  (NodeSource 脚本需要)
+#   pm2   (全局 npm 安装)
+#   build-essential + python3  (better-sqlite3 源码编译兜底)
+# 默认端口 16000，nginx / Cloudflare 反代指向该端口
 
 cd "$(dirname "$0")"
 
@@ -16,61 +19,120 @@ log()  { printf "\033[1;32m[deploy]\033[0m %s\n" "$*"; }
 warn() { printf "\033[1;33m[deploy]\033[0m %s\n" "$*" >&2; }
 die()  { printf "\033[1;31m[deploy]\033[0m %s\n" "$*" >&2; exit 1; }
 
-need_sudo() {
-  # 在需要时把 sudo 打到命令前面；如果已经是 root 就为空
+# 以 root 身份执行一个命令；非 root 走 sudo；都没有则退出
+run_as_root() {
   if [ "$(id -u)" -eq 0 ]; then
-    echo ""
+    "$@"
   elif command -v sudo >/dev/null 2>&1; then
-    echo "sudo"
+    sudo "$@"
   else
-    die "需要 root 或 sudo 权限来安装系统软件包，请手动安装 Node.js >= ${REQUIRED_NODE_MAJOR}"
+    die "需要 root 或 sudo 权限来安装系统软件包，请手动安装相关依赖后重跑。"
   fi
 }
 
-ensure_curl() {
-  if command -v curl >/dev/null 2>&1; then
-    return
-  fi
-  local SUDO
-  SUDO="$(need_sudo)"
-  if command -v apt-get >/dev/null 2>&1; then
-    DEBIAN_FRONTEND=noninteractive $SUDO apt-get update -y
-    DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y curl ca-certificates
-  elif command -v dnf >/dev/null 2>&1; then
-    $SUDO dnf install -y curl ca-certificates
-  elif command -v yum >/dev/null 2>&1; then
-    $SUDO yum install -y curl ca-certificates
-  elif command -v apk >/dev/null 2>&1; then
-    $SUDO apk add --no-cache curl ca-certificates
+# 等同 run_as_root，但保留环境变量（apt 需要 DEBIAN_FRONTEND 等）
+run_as_root_env() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo -E "$@"
   else
-    die "未找到 curl 且无法自动安装，请手动安装 curl 后重试"
+    die "需要 root 或 sudo 权限来安装系统软件包，请手动安装相关依赖后重跑。"
   fi
+}
+
+# 检测包管理器
+detect_pkg_mgr() {
+  if command -v apt-get >/dev/null 2>&1; then echo apt; return; fi
+  if command -v dnf     >/dev/null 2>&1; then echo dnf; return; fi
+  if command -v yum     >/dev/null 2>&1; then echo yum; return; fi
+  if command -v apk     >/dev/null 2>&1; then echo apk; return; fi
+  echo none
+}
+
+PKG_MGR="$(detect_pkg_mgr)"
+
+pkg_install() {
+  # pkg_install <package...>
+  case "$PKG_MGR" in
+    apt)
+      run_as_root_env env DEBIAN_FRONTEND=noninteractive apt-get update -y
+      run_as_root_env env DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+      ;;
+    dnf) run_as_root dnf install -y "$@" ;;
+    yum) run_as_root yum install -y "$@" ;;
+    apk) run_as_root apk add --no-cache "$@" ;;
+    none) die "无法识别系统包管理器，请手动安装：$*" ;;
+  esac
+}
+
+ensure_curl() {
+  if command -v curl >/dev/null 2>&1; then return; fi
+  log "未检测到 curl，自动安装"
+  case "$PKG_MGR" in
+    apt|dnf|yum) pkg_install curl ca-certificates ;;
+    apk) pkg_install curl ca-certificates ;;
+    *) die "需要 curl，请手动安装后重试" ;;
+  esac
 }
 
 install_node() {
   log "自动安装 Node.js ${INSTALL_NODE_MAJOR} ..."
-  local SUDO
-  SUDO="$(need_sudo)"
   ensure_curl
 
-  if command -v apt-get >/dev/null 2>&1; then
-    log "检测到 apt，使用 NodeSource 仓库"
-    curl -fsSL "https://deb.nodesource.com/setup_${INSTALL_NODE_MAJOR}.x" | $SUDO -E bash -
-    DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y nodejs
-  elif command -v dnf >/dev/null 2>&1; then
-    log "检测到 dnf，使用 NodeSource 仓库"
-    curl -fsSL "https://rpm.nodesource.com/setup_${INSTALL_NODE_MAJOR}.x" | $SUDO bash -
-    $SUDO dnf install -y nodejs
-  elif command -v yum >/dev/null 2>&1; then
-    log "检测到 yum，使用 NodeSource 仓库"
-    curl -fsSL "https://rpm.nodesource.com/setup_${INSTALL_NODE_MAJOR}.x" | $SUDO bash -
-    $SUDO yum install -y nodejs
-  elif command -v apk >/dev/null 2>&1; then
-    log "检测到 apk (Alpine)，直接安装系统仓库里的 nodejs"
-    $SUDO apk add --no-cache nodejs npm
-  else
-    die "无法识别系统包管理器，请手动安装 Node.js >= ${REQUIRED_NODE_MAJOR}"
+  case "$PKG_MGR" in
+    apt)
+      local tmp
+      tmp="$(mktemp)"
+      curl -fsSL "https://deb.nodesource.com/setup_${INSTALL_NODE_MAJOR}.x" -o "$tmp" \
+        || { rm -f "$tmp"; die "下载 NodeSource 脚本失败（网络/代理问题？）"; }
+      run_as_root bash "$tmp"
+      rm -f "$tmp"
+      run_as_root_env env DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
+      ;;
+    dnf)
+      local tmp; tmp="$(mktemp)"
+      curl -fsSL "https://rpm.nodesource.com/setup_${INSTALL_NODE_MAJOR}.x" -o "$tmp" \
+        || { rm -f "$tmp"; die "下载 NodeSource 脚本失败"; }
+      run_as_root bash "$tmp"
+      rm -f "$tmp"
+      run_as_root dnf install -y nodejs
+      ;;
+    yum)
+      local tmp; tmp="$(mktemp)"
+      curl -fsSL "https://rpm.nodesource.com/setup_${INSTALL_NODE_MAJOR}.x" -o "$tmp" \
+        || { rm -f "$tmp"; die "下载 NodeSource 脚本失败"; }
+      run_as_root bash "$tmp"
+      rm -f "$tmp"
+      run_as_root yum install -y nodejs
+      ;;
+    apk)
+      log "Alpine 直接用系统仓库 (nodejs + npm)"
+      pkg_install nodejs npm
+      ;;
+    *)
+      die "无法识别系统包管理器，请手动安装 Node.js >= ${REQUIRED_NODE_MAJOR}"
+      ;;
+  esac
+}
+
+ensure_build_tools() {
+  # better-sqlite3 如果没有匹配的 prebuilt，需要源码编译
+  if command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1; then
+    if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
+      return
+    fi
   fi
+  log "安装编译工具（better-sqlite3 源码编译兜底）"
+  case "$PKG_MGR" in
+    apt) pkg_install build-essential python3 ;;
+    dnf) run_as_root dnf groupinstall -y "Development Tools" || true
+         pkg_install python3 ;;
+    yum) run_as_root yum groupinstall -y "Development Tools" || true
+         pkg_install python3 ;;
+    apk) pkg_install build-base python3 ;;
+    *)   warn "无法识别的系统，跳过编译工具安装；npm ci 失败时可能需要手动装 gcc/python3" ;;
+  esac
 }
 
 current_node_major() {
@@ -81,36 +143,37 @@ current_node_major() {
   fi
 }
 
-# ---------- Node 检查 / 自动安装 ----------
+# ---------- Node ----------
 NODE_MAJOR="$(current_node_major)"
 if [ "${NODE_MAJOR:-0}" -lt "$REQUIRED_NODE_MAJOR" ]; then
   if [ "${NODE_MAJOR:-0}" -eq 0 ]; then
     log "未检测到 node，开始自动安装"
   else
-    warn "当前 Node 版本 v${NODE_MAJOR} 低于要求 (>= ${REQUIRED_NODE_MAJOR})，将自动升级"
+    warn "当前 Node v${NODE_MAJOR} < ${REQUIRED_NODE_MAJOR}，自动升级"
   fi
   install_node
-
   NODE_MAJOR="$(current_node_major)"
-  if ! command -v node >/dev/null 2>&1 || [ "${NODE_MAJOR:-0}" -lt "$REQUIRED_NODE_MAJOR" ]; then
-    die "Node 安装后版本仍不满足: $(node -v 2>/dev/null || echo 'not installed')"
+  if [ "${NODE_MAJOR:-0}" -lt "$REQUIRED_NODE_MAJOR" ]; then
+    die "安装后 Node 版本仍不满足: $(node -v 2>/dev/null || echo 'not installed')"
   fi
   log "Node 已就绪: $(node -v)"
 fi
+command -v npm >/dev/null 2>&1 || die "未检测到 npm（通常随 nodejs 一起），请检查 Node 安装过程"
 
-command -v npm >/dev/null 2>&1 || die "未检测到 npm（通常随 nodejs 一起安装，请检查安装过程）"
+# ---------- 编译工具（给 better-sqlite3 兜底）----------
+ensure_build_tools
 
-# ---------- pm2 检查 / 自动安装 ----------
+# ---------- pm2 ----------
 if ! command -v pm2 >/dev/null 2>&1; then
-  log "未检测到 pm2，尝试 npm install -g pm2"
+  log "未检测到 pm2，安装全局 pm2"
   if ! npm install -g pm2 >/dev/null 2>&1; then
-    SUDO="$(need_sudo)"
-    log "直接 npm i -g 失败（可能没写权限），改用 $SUDO npm install -g pm2"
-    $SUDO npm install -g pm2 || die "自动安装 pm2 失败，请手动执行: sudo npm install -g pm2"
+    log "用户态安装失败，改用 root 身份再试"
+    run_as_root npm install -g pm2 \
+      || die "自动安装 pm2 失败，请手动执行: sudo npm install -g pm2"
   fi
 fi
 
-# ---------- 生成 .env ----------
+# ---------- .env ----------
 APP_PORT_DEFAULT="${APP_PORT:-16000}"
 ENV_FILE=".env"
 
@@ -172,7 +235,7 @@ export APP_PORT
 # ---------- 目录 ----------
 mkdir -p data/images
 
-# ---------- 依赖：仅在 package-lock 变化时重装 ----------
+# ---------- npm ci ----------
 STAMP="node_modules/.deploy-stamp"
 if [ ! -d node_modules ] || [ ! -f "$STAMP" ] || [ "package-lock.json" -nt "$STAMP" ]; then
   log "安装依赖（npm ci）..."
@@ -183,7 +246,7 @@ else
   log "依赖未变更，跳过 npm ci"
 fi
 
-# ---------- 构建 ----------
+# ---------- build ----------
 log "构建（npm run build）..."
 npm run build
 
