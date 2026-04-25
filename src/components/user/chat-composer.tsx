@@ -60,6 +60,8 @@ export function ChatComposer({
     startTransition(async () => {
       try {
         await onSubmit(payload);
+        // 一次性 override：成功提交后回到默认（跟随是否有上一张图）
+        setContinueLastOverride(null);
       } catch (err) {
         setContent(trimmed);
         setError(err instanceof Error ? err.message : "发送失败，请稍后重试。");
