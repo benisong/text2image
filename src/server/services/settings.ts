@@ -56,6 +56,13 @@ export function getApiSettings() {
       DEFAULT_MAX_CONCURRENCY,
     ),
     imageRootDir: getTextSetting("storage.image_root_dir", DEFAULT_IMAGE_ROOT),
+    napcatEnabled: getTextSetting("napcat.enabled", "0") === "1",
+    napcatBaseUrl: getTextSetting("napcat.base_url", ""),
+    napcatAccessToken: getTextSetting("napcat.access_token", ""),
+    napcatWebhookSecret: getTextSetting("napcat.webhook_secret", ""),
+    napcatTrigger: getTextSetting("napcat.trigger", "出图"),
+    napcatAllowedUserIds: getTextSetting("napcat.allowed_user_ids", ""),
+    napcatAllowedGroupIds: getTextSetting("napcat.allowed_group_ids", ""),
   };
 }
 
@@ -68,6 +75,13 @@ export type PublicApiSettings = {
   promptOptimizerModel: string;
   maxConcurrency: number;
   imageRootDir: string;
+  napcatEnabled: boolean;
+  napcatBaseUrl: string;
+  hasNapcatAccessToken: boolean;
+  hasNapcatWebhookSecret: boolean;
+  napcatTrigger: string;
+  napcatAllowedUserIds: string;
+  napcatAllowedGroupIds: string;
 };
 
 export function getPublicApiSettings(): PublicApiSettings {
@@ -81,6 +95,13 @@ export function getPublicApiSettings(): PublicApiSettings {
     promptOptimizerModel: settings.promptOptimizerModel,
     maxConcurrency: settings.maxConcurrency,
     imageRootDir: settings.imageRootDir,
+    napcatEnabled: settings.napcatEnabled,
+    napcatBaseUrl: settings.napcatBaseUrl,
+    hasNapcatAccessToken: settings.napcatAccessToken.trim().length > 0,
+    hasNapcatWebhookSecret: settings.napcatWebhookSecret.trim().length > 0,
+    napcatTrigger: settings.napcatTrigger,
+    napcatAllowedUserIds: settings.napcatAllowedUserIds,
+    napcatAllowedGroupIds: settings.napcatAllowedGroupIds,
   };
 }
 
@@ -93,6 +114,13 @@ export function updateApiSettings(input: {
   promptOptimizerModel: string;
   maxConcurrency: number;
   imageRootDir: string;
+  napcatEnabled: boolean;
+  napcatBaseUrl: string;
+  napcatAccessToken?: string;
+  napcatWebhookSecret?: string;
+  napcatTrigger: string;
+  napcatAllowedUserIds: string;
+  napcatAllowedGroupIds: string;
 }) {
   const db = getDb();
   const now = new Date().toISOString();
@@ -115,11 +143,26 @@ export function updateApiSettings(input: {
     ["prompt_optimizer.model", "text", input.promptOptimizerModel, 0],
     ["generation.max_concurrency", "number", String(input.maxConcurrency), 0],
     ["storage.image_root_dir", "text", input.imageRootDir, 0],
+    ["napcat.enabled", "text", input.napcatEnabled ? "1" : "0", 0],
+    ["napcat.base_url", "text", input.napcatBaseUrl, 0],
+    ["napcat.trigger", "text", input.napcatTrigger, 0],
+    ["napcat.allowed_user_ids", "text", input.napcatAllowedUserIds, 0],
+    ["napcat.allowed_group_ids", "text", input.napcatAllowedGroupIds, 0],
   ];
 
   const trimmedKey = (input.imageApiKey ?? "").trim();
   if (trimmedKey.length > 0) {
     rows.push(["image_api.key", "text", trimmedKey, 1]);
+  }
+
+  const trimmedToken = (input.napcatAccessToken ?? "").trim();
+  if (trimmedToken.length > 0) {
+    rows.push(["napcat.access_token", "text", trimmedToken, 1]);
+  }
+
+  const trimmedSecret = (input.napcatWebhookSecret ?? "").trim();
+  if (trimmedSecret.length > 0) {
+    rows.push(["napcat.webhook_secret", "text", trimmedSecret, 1]);
   }
 
   const tx = db.transaction(() => {

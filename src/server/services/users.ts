@@ -64,6 +64,15 @@ export function findUserById(id: string) {
   return row ? mapUser(row) : null;
 }
 
+export function findUserByUsername(username: string) {
+  const db = getDb();
+  const row = db
+    .prepare(`SELECT ${USER_SELECT_COLUMNS} FROM users WHERE username = ?`)
+    .get(username) as UserRow | undefined;
+
+  return row ? mapUser(row) : null;
+}
+
 export function findUserWithPassword(username: string) {
   const db = getDb();
   return db

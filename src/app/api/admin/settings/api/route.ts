@@ -36,8 +36,11 @@ export const PUT = withAdmin(async (ctx) => {
     targetType: "settings",
     metadata: {
       updatedApiKey: (parsed.data.imageApiKey ?? "").trim().length > 0,
+      updatedNapcatToken: (parsed.data.napcatAccessToken ?? "").trim().length > 0,
+      updatedNapcatSecret: (parsed.data.napcatWebhookSecret ?? "").trim().length > 0,
       baseUrl: parsed.data.imageApiBaseUrl,
       model: parsed.data.imageApiModel,
+      napcatEnabled: parsed.data.napcatEnabled,
     },
     ip: ctx.ip,
   });

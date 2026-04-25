@@ -16,6 +16,8 @@ import {
   DEFAULT_IMAGE_API_SIZE,
   DEFAULT_IMAGE_ROOT,
   DEFAULT_MAX_CONCURRENCY,
+  DEFAULT_NAPCAT_TRIGGER,
+  QQ_BRIDGE_USERNAME,
   ROLE,
 } from "@/lib/constants";
 import { nowIso } from "@/lib/utils";
@@ -201,6 +203,18 @@ function migrateSchema(db: Database) {
     db.exec(`ALTER TABLE generations ADD COLUMN public_error_message TEXT`);
   }
 
+  if (!generationColumns.some((column) => column.name === "delivery_channel")) {
+    db.exec(`ALTER TABLE generations ADD COLUMN delivery_channel TEXT`);
+  }
+
+  if (!generationColumns.some((column) => column.name === "delivery_target_json")) {
+    db.exec(`ALTER TABLE generations ADD COLUMN delivery_target_json TEXT`);
+  }
+
+  if (!generationColumns.some((column) => column.name === "delivery_status")) {
+    db.exec(`ALTER TABLE generations ADD COLUMN delivery_status TEXT`);
+  }
+
   const jobColumns = db
     .prepare(`PRAGMA table_info(jobs)`)
     .all() as Array<{ name: string }>;
@@ -266,6 +280,27 @@ function bootstrapData(db: Database) {
     });
   }
 
+  // QQ Bridge 内部账号：napcat 触发的生成挂在它名下；不可登录（密码随机），保持 active
+  const qqBridge = db
+    .prepare(`SELECT id FROM users WHERE username = ?`)
+    .get(QQ_BRIDGE_USERNAME) as { id: string } | undefined;
+  if (!qqBridge) {
+    db.prepare(`
+      INSERT INTO users (
+        id, username, password_hash, role, display_name, is_active,
+        must_change_password, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?)
+    `).run(
+      crypto.randomUUID(),
+      QQ_BRIDGE_USERNAME,
+      bcrypt.hashSync(crypto.randomUUID(), 10),
+      ROLE.user,
+      "QQ Bridge",
+      now,
+      now,
+    );
+  }
+
   // Drop legacy Vertex AI settings if present (we now use OpenAI-compatible API).
   db.prepare(
     `DELETE FROM system_settings WHERE setting_key LIKE 'vertex.%'`,
@@ -326,6 +361,47 @@ function bootstrapData(db: Database) {
     "storage.image_root_dir",
     "text",
     process.env.IMAGE_ROOT_DIR ?? DEFAULT_IMAGE_ROOT,
+    null,
+  );
+
+  // NapCat
+  upsertSetting(db, "napcat.enabled", "text", process.env.NAPCAT_ENABLED ?? "0", null);
+  upsertSetting(db, "napcat.base_url", "text", process.env.NAPCAT_BASE_URL ?? "", null);
+  upsertSetting(
+    db,
+    "napcat.access_token",
+    "text",
+    process.env.NAPCAT_ACCESS_TOKEN ?? "",
+    null,
+    true,
+  );
+  upsertSetting(
+    db,
+    "napcat.webhook_secret",
+    "text",
+    process.env.NAPCAT_WEBHOOK_SECRET ?? "",
+    null,
+    true,
+  );
+  upsertSetting(
+    db,
+    "napcat.trigger",
+    "text",
+    process.env.NAPCAT_TRIGGER ?? DEFAULT_NAPCAT_TRIGGER,
+    null,
+  );
+  upsertSetting(
+    db,
+    "napcat.allowed_user_ids",
+    "text",
+    process.env.NAPCAT_ALLOWED_USER_IDS ?? "",
+    null,
+  );
+  upsertSetting(
+    db,
+    "napcat.allowed_group_ids",
+    "text",
+    process.env.NAPCAT_ALLOWED_GROUP_IDS ?? "",
     null,
   );
 }

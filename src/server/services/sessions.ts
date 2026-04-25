@@ -273,6 +273,144 @@ export class CreateMessageError extends Error {
   }
 }
 
+export type DeliveryTarget = {
+  channel: "napcat";
+  userId?: number;
+  groupId?: number;
+};
+
+export function findOrCreateSession(input: {
+  userId: string;
+  title: string;
+}) {
+  const db = getDb();
+  const existing = db
+    .prepare(
+      `SELECT id, user_id, title, created_at, updated_at, last_message_at
+       FROM sessions WHERE user_id = ? AND title = ? LIMIT 1`,
+    )
+    .get(input.userId, input.title) as SessionRow | undefined;
+
+  if (existing) {
+    return existing.id;
+  }
+
+  return createSession(input.userId, input.title);
+}
+
+export function createNapcatGeneration(input: {
+  userId: string;
+  sessionId: string;
+  content: string;
+  delivery: DeliveryTarget;
+  outputMode?: "image_only" | "image_with_commentary";
+}) {
+  return transaction((db) => {
+    const now = nowIso();
+    const messageId = crypto.randomUUID();
+    const generationId = crypto.randomUUID();
+    const jobId = crypto.randomUUID();
+    const outputMode = input.outputMode ?? "image_only";
+
+    db.prepare(`
+      INSERT INTO chat_messages (
+        id, session_id, role, message_type, content_text, generation_id, job_id, created_at
+      )
+      VALUES (?, ?, 'user', 'text', ?, ?, ?, ?)
+    `).run(messageId, input.sessionId, input.content, generationId, jobId, now);
+
+    db.prepare(`
+      INSERT INTO generations (
+        id, session_id, parent_generation_id, trigger_message_id, provider, model,
+        original_prompt, effective_prompt, negative_prompt, prompt_json, seed, keep_seed,
+        aspect_ratio, image_size, mime_type, status, vertex_request_id, output_mode,
+        explanation_text, explanation_status, storage_bucket, storage_path, public_url,
+        width, height, file_size_bytes, error_code, error_message, created_at, updated_at, completed_at,
+        delivery_channel, delivery_target_json, delivery_status
+      )
+      VALUES (?, ?, NULL, ?, 'openai_compatible', ?, ?, ?, NULL, ?, NULL, 0, '1:1', NULL, 'image/png', ?, NULL, ?, NULL, 'none', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, NULL, ?, ?, 'pending')
+    `).run(
+      generationId,
+      input.sessionId,
+      messageId,
+      DEFAULT_IMAGE_API_MODEL,
+      input.content,
+      input.content,
+      JSON.stringify({}),
+      GENERATION_STATUS.queued,
+      outputMode,
+      now,
+      now,
+      input.delivery.channel,
+      JSON.stringify({
+        userId: input.delivery.userId ?? null,
+        groupId: input.delivery.groupId ?? null,
+      }),
+    );
+
+    db.prepare(`
+      INSERT INTO jobs (
+        id, session_id, generation_id, job_type, queue_name, queue_job_id,
+        status, attempt_count, progress, error_message, created_at, updated_at
+      )
+      VALUES (?, ?, ?, 'image_generation', 'image-generation', ?, ?, 0, 0, NULL, ?, ?)
+    `).run(jobId, input.sessionId, generationId, jobId, JOB_STATUS.waiting, now, now);
+
+    db.prepare(`
+      UPDATE sessions
+      SET title = COALESCE(NULLIF(title, ''), ?), updated_at = ?, last_message_at = ?
+      WHERE id = ?
+    `).run(titleFromPrompt(input.content), now, now, input.sessionId);
+
+    return { messageId, generationId, jobId };
+  });
+}
+
+export function getGenerationDelivery(generationId: string) {
+  const row = getDb()
+    .prepare(
+      `SELECT delivery_channel, delivery_target_json, delivery_status
+       FROM generations WHERE id = ?`,
+    )
+    .get(generationId) as
+    | {
+        delivery_channel: string | null;
+        delivery_target_json: string | null;
+        delivery_status: string | null;
+      }
+    | undefined;
+
+  if (!row || !row.delivery_channel) return null;
+
+  let target: { userId?: number | null; groupId?: number | null } = {};
+  if (row.delivery_target_json) {
+    try {
+      target = JSON.parse(row.delivery_target_json);
+    } catch {
+      // ignore
+    }
+  }
+
+  return {
+    channel: row.delivery_channel,
+    target,
+    status: row.delivery_status,
+  };
+}
+
+export function setGenerationDeliveryStatus(
+  generationId: string,
+  status: "pending" | "sent" | "failed",
+  errorMessage?: string | null,
+) {
+  void errorMessage;
+  getDb()
+    .prepare(
+      `UPDATE generations SET delivery_status = ?, updated_at = ? WHERE id = ?`,
+    )
+    .run(status, nowIso(), generationId);
+}
+
 export function createMessageAndGeneration(input: {
   sessionId: string;
   content: string;

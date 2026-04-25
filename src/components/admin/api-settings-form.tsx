@@ -14,10 +14,22 @@ type PublicApiSettings = {
   promptOptimizerModel: string;
   maxConcurrency: number;
   imageRootDir: string;
+  napcatEnabled: boolean;
+  napcatBaseUrl: string;
+  hasNapcatAccessToken: boolean;
+  hasNapcatWebhookSecret: boolean;
+  napcatTrigger: string;
+  napcatAllowedUserIds: string;
+  napcatAllowedGroupIds: string;
 };
 
-type FormState = Omit<PublicApiSettings, "hasImageApiKey"> & {
+type FormState = Omit<
+  PublicApiSettings,
+  "hasImageApiKey" | "hasNapcatAccessToken" | "hasNapcatWebhookSecret"
+> & {
   imageApiKey: string;
+  napcatAccessToken: string;
+  napcatWebhookSecret: string;
 };
 
 type ModelEntry = {
@@ -36,8 +48,17 @@ export function ApiSettingsForm({ initial }: { initial: PublicApiSettings }) {
     maxConcurrency: initial.maxConcurrency,
     imageRootDir: initial.imageRootDir,
     imageApiKey: "",
+    napcatEnabled: initial.napcatEnabled,
+    napcatBaseUrl: initial.napcatBaseUrl,
+    napcatTrigger: initial.napcatTrigger,
+    napcatAllowedUserIds: initial.napcatAllowedUserIds,
+    napcatAllowedGroupIds: initial.napcatAllowedGroupIds,
+    napcatAccessToken: "",
+    napcatWebhookSecret: "",
   });
   const [hasStoredKey, setHasStoredKey] = useState(initial.hasImageApiKey);
+  const [hasNapcatToken, setHasNapcatToken] = useState(initial.hasNapcatAccessToken);
+  const [hasNapcatSecret, setHasNapcatSecret] = useState(initial.hasNapcatWebhookSecret);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -46,7 +67,7 @@ export function ApiSettingsForm({ initial }: { initial: PublicApiSettings }) {
   const [modelsError, setModelsError] = useState("");
   const [fetchingModels, setFetchingModels] = useState(false);
 
-  const patch = (key: keyof FormState, value: string | number) => {
+  const patch = (key: keyof FormState, value: string | number | boolean) => {
     setForm((current) => ({ ...current, [key]: value }));
   };
 
@@ -114,10 +135,15 @@ export function ApiSettingsForm({ initial }: { initial: PublicApiSettings }) {
       }
 
       setSaved("配置已保存。");
-      setForm((current) => ({ ...current, imageApiKey: "" }));
-      if (payload.imageApiKey.trim()) {
-        setHasStoredKey(true);
-      }
+      setForm((current) => ({
+        ...current,
+        imageApiKey: "",
+        napcatAccessToken: "",
+        napcatWebhookSecret: "",
+      }));
+      if (payload.imageApiKey.trim()) setHasStoredKey(true);
+      if (payload.napcatAccessToken.trim()) setHasNapcatToken(true);
+      if (payload.napcatWebhookSecret.trim()) setHasNapcatSecret(true);
       router.refresh();
     });
   };
@@ -260,6 +286,100 @@ export function ApiSettingsForm({ initial }: { initial: PublicApiSettings }) {
           Key；留空时会用已保存的 Key。
         </p>
       </div>
+
+      {/* NapCat 集成 */}
+      <div className="mt-6 rounded-2xl border border-line/70 bg-white/40 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold">NapCat (QQ) 集成</h3>
+          <label className="inline-flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={form.napcatEnabled}
+              onChange={(event) => patch("napcatEnabled", event.target.checked)}
+            />
+            启用
+          </label>
+        </div>
+        <p className="mt-1 text-xs text-muted">
+          QQ 用户给 bot 发 <code>{form.napcatTrigger || "出图"} ...</code> 触发，
+          生成完后图片自动发回 QQ。Webhook 地址：
+          <code className="ml-1">/api/napcat/webhook</code>。
+        </p>
+        <div className="mt-3 grid gap-4 md:grid-cols-2">
+          <label className="space-y-2">
+            <span className="text-sm font-medium">NapCat HTTP Base URL</span>
+            <input
+              className="field"
+              placeholder="http://127.0.0.1:3001"
+              value={form.napcatBaseUrl}
+              onChange={(event) => patch("napcatBaseUrl", event.target.value)}
+            />
+          </label>
+          <label className="space-y-2">
+            <span className="text-sm font-medium">触发关键字</span>
+            <input
+              className="field"
+              placeholder="出图"
+              value={form.napcatTrigger}
+              onChange={(event) => patch("napcatTrigger", event.target.value)}
+            />
+          </label>
+          <label className="space-y-2 md:col-span-2">
+            <span className="text-sm font-medium">允许的 QQ 用户 ID（逗号或空格分隔）</span>
+            <input
+              className="field"
+              placeholder="123456789, 987654321"
+              value={form.napcatAllowedUserIds}
+              onChange={(event) => patch("napcatAllowedUserIds", event.target.value)}
+            />
+          </label>
+          <label className="space-y-2 md:col-span-2">
+            <span className="text-sm font-medium">允许的 QQ 群 ID（逗号或空格分隔）</span>
+            <input
+              className="field"
+              placeholder="11111, 22222"
+              value={form.napcatAllowedGroupIds}
+              onChange={(event) => patch("napcatAllowedGroupIds", event.target.value)}
+            />
+          </label>
+        </div>
+        <div className="mt-3">
+          <div className="flex items-center justify-between gap-3">
+            <label className="text-sm font-medium">NapCat Access Token</label>
+            <span className="text-xs text-muted">
+              {hasNapcatToken ? "已配置，留空表示保留原值" : "可选"}
+            </span>
+          </div>
+          <input
+            className="field mt-2 font-mono text-sm"
+            type="password"
+            autoComplete="new-password"
+            placeholder={hasNapcatToken ? "留空保留原值" : "NapCat HTTP API token（如配置）"}
+            value={form.napcatAccessToken}
+            onChange={(event) => patch("napcatAccessToken", event.target.value)}
+          />
+        </div>
+        <div className="mt-3">
+          <div className="flex items-center justify-between gap-3">
+            <label className="text-sm font-medium">Webhook Secret (HMAC-SHA1)</label>
+            <span className="text-xs text-muted">
+              {hasNapcatSecret ? "已配置，留空表示保留原值" : "可选"}
+            </span>
+          </div>
+          <input
+            className="field mt-2 font-mono text-sm"
+            type="password"
+            autoComplete="new-password"
+            placeholder={hasNapcatSecret ? "留空保留原值" : "NapCat 端配置的 secret，留空则不校验签名"}
+            value={form.napcatWebhookSecret}
+            onChange={(event) => patch("napcatWebhookSecret", event.target.value)}
+          />
+        </div>
+        <p className="mt-3 text-xs text-muted">
+          安全提示：白名单两边都为空将拒绝所有请求；建议至少填一个 QQ 用户或群，避免任何人发消息都能触发付费 API。
+        </p>
+      </div>
+
       {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
       {saved ? <p className="mt-3 text-sm text-green-700">{saved}</p> : null}
       <button className="btn-primary mt-4" type="submit" disabled={isPending}>

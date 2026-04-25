@@ -38,6 +38,13 @@ export const apiSettingsSchema = z.object({
     .refine(isSandboxedRelativePath, {
       message: "图片目录必须是项目数据目录下的相对路径，且不允许包含 .. 或 .",
     }),
+  napcatEnabled: z.coerce.boolean().default(false),
+  napcatBaseUrl: z.string().trim().default(""),
+  napcatAccessToken: z.string().trim().optional().default(""),
+  napcatWebhookSecret: z.string().trim().optional().default(""),
+  napcatTrigger: z.string().trim().default("出图"),
+  napcatAllowedUserIds: z.string().trim().default(""),
+  napcatAllowedGroupIds: z.string().trim().default(""),
 });
 
 export const changePasswordSchema = z

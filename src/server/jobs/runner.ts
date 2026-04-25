@@ -10,13 +10,16 @@ import {
 import { buildOptimizedPrompt } from "@/server/ai/prompt-optimizer";
 import { optimizePromptWithLlm } from "@/server/ai/prompt-llm";
 import { getDb } from "@/server/db";
+import { sendNapcatImage, sendNapcatText } from "@/server/integrations/napcat";
 import {
   getGenerationById,
+  getGenerationDelivery,
   getJobById,
   listPendingJobs,
   markGenerationCompleted,
   markGenerationFailed,
   markGenerationProcessing,
+  setGenerationDeliveryStatus,
   updateGenerationQueuedPayload,
   updateJobStatus,
 } from "@/server/services/sessions";
@@ -266,6 +269,12 @@ export async function runSingleJob(jobId: string) {
       explanationStatus,
     });
 
+    // 投递（NapCat 等外部通道）
+    void dispatchDelivery({
+      generationId: generation.id,
+      storagePath: stored.absolutePath,
+    });
+
     updateJobStatus({
       jobId,
       status: JOB_STATUS.completed,
@@ -289,5 +298,51 @@ export async function runSingleJob(jobId: string) {
       publicErrorMessage: publicMessage,
       finishedAt: new Date().toISOString(),
     });
+
+    // 失败时也通知 napcat 触发的来源
+    void notifyDeliveryFailure(generation.id, publicMessage);
   }
+}
+
+async function dispatchDelivery(input: {
+  generationId: string;
+  storagePath: string;
+}) {
+  const delivery = getGenerationDelivery(input.generationId);
+  if (!delivery || delivery.channel !== "napcat") return;
+
+  const result = await sendNapcatImage({
+    storagePath: input.storagePath,
+    target: {
+      userId: delivery.target.userId ?? null,
+      groupId: delivery.target.groupId ?? null,
+    },
+  });
+
+  if (result.ok) {
+    setGenerationDeliveryStatus(input.generationId, "sent");
+  } else {
+    console.error(
+      "[delivery] napcat 发送失败",
+      input.generationId,
+      result.error,
+    );
+    setGenerationDeliveryStatus(input.generationId, "failed", result.error);
+  }
+}
+
+async function notifyDeliveryFailure(
+  generationId: string,
+  publicMessage: string,
+) {
+  const delivery = getGenerationDelivery(generationId);
+  if (!delivery || delivery.channel !== "napcat") return;
+  await sendNapcatText({
+    target: {
+      userId: delivery.target.userId ?? null,
+      groupId: delivery.target.groupId ?? null,
+    },
+    text: `[文生图] 失败：${publicMessage}`,
+  });
+  setGenerationDeliveryStatus(generationId, "failed", publicMessage);
 }
