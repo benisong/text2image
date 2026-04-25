@@ -21,12 +21,20 @@ export function ChatComposer({
 }: ChatComposerProps) {
   const [content, setContent] = useState("");
   const [keepSeed, setKeepSeed] = useState(true);
-  const [continueLast, setContinueLast] = useState(Boolean(latestGenerationId));
+  // null = 跟随默认（有上一张就自动勾上）；true/false = 用户在本会话内的明确选择
+  const [continueLastOverride, setContinueLastOverride] = useState<boolean | null>(
+    null,
+  );
   const [outputMode, setOutputMode] = useState<"image_only" | "image_with_commentary">(
     "image_only",
   );
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
+
+  const continueLast =
+    continueLastOverride !== null
+      ? continueLastOverride
+      : Boolean(latestGenerationId);
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -72,7 +80,7 @@ export function ChatComposer({
           <input
             checked={continueLast}
             disabled={!latestGenerationId}
-            onChange={(event) => setContinueLast(event.target.checked)}
+            onChange={(event) => setContinueLastOverride(event.target.checked)}
             type="checkbox"
           />
           继续上一张
